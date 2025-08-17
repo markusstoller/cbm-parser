@@ -1,0 +1,16 @@
+[package]
+name = "untitled"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+md5="*"
+sha256="*"
+sha1="*"
+endian_codec = "*"
+petscii="*"
+hex-slice="*"
+rusqlite = { version = "0.31", features = ["bundled"] }
+async-channel="*"
+tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros"] }
+clap = { version = "*", features = ["derive"] }
