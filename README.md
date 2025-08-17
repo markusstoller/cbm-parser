@@ -29,7 +29,7 @@ Build
 - Debug build: cargo build
 - Release build: cargo build --release
 
-The compiled binary will be in target\debug\untitled.exe or target\release\untitled.exe (package name in Cargo.toml is currently "untitled").
+The compiled binary will be in target\debug\cbm-parser.exe or target\release\cbm-parser.exe.
 
 
 Usage
@@ -89,7 +89,6 @@ Limitations and notes
 - 7z parsing currently uses a placeholder password ("pass") to open archives; adjust if needed
 - Filename decoding relies on PETSCII handling in the codebase
 - Error handling is intentionally lightweight; failures are logged and processing continues
-- The crate name in Cargo.toml is "untitled" while the project is referred to as cbm-parser; you may want to align the package name
 
 
 Contributing
