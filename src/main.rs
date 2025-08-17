@@ -1,7 +1,6 @@
 pub mod disk;
 mod utils;
 
-use crate::utils::helper::Element;
 use async_channel::*;
 use clap::Parser;
 use disk::cbm::{D64, DiskParser};
@@ -12,6 +11,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::*;
+use utils::helper::Element;
 use utils::helper::{Database, SqliteHandler};
 // Add to Cargo.toml
 
