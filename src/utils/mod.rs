@@ -21,7 +21,7 @@ pub mod helper {
 
     pub(crate) struct SqliteHandler {
         queue: Vec<Element>,
-        conn: Connection,
+        conn: Option<Connection>,
     }
 
     /// Initializes and sets up a SQLite database at the specified file path.
@@ -106,7 +106,7 @@ pub mod helper {
             let conn = setup_database(file_name);
 
             SqliteHandler {
-                conn,
+                conn: Some(conn),
                 queue: Vec::new(),
             }
         }
@@ -131,7 +131,16 @@ pub mod helper {
         /// ```
         fn close(&mut self) -> bool {
             self.write_to_db();
+            if let Some(conn) = self.conn.take() {
+                // Take ownership and close
+                conn.flush_prepared_statement_cache();
+                conn.cache_flush().unwrap();
+                conn.close().unwrap_or_else(|_| {
+                    eprintln!("Failed to close database connection");
+                });
+            }
             true
+
         }
 
         /// Adds an element to the queue.
@@ -270,22 +279,24 @@ pub mod helper {
         /// - Populate `self.queue` with file data in the expected format (containing `parent` and `prg` fields)
         ///   before invoking this function, as it processes and clears the queue.
         fn write_to_db(&mut self) {
-            if let Ok(tx) = self.conn.transaction() {
-                {
-                    let mut stmt = tx
-                        .prepare(
-                            "INSERT INTO files (parent, filename, track, sector, length, md5, sha1, sha256)
+            if let Some(ref mut conn) = self.conn {
+                if let Ok(tx) = conn.transaction() {
+                    {
+                        let mut stmt = tx
+                            .prepare(
+                                "INSERT INTO files (parent, filename, track, sector, length, md5, sha1, sha256)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        )
-                        .expect("failed to prepare insert statement");
+                            )
+                            .expect("failed to prepare insert statement");
 
-                    for elem in &self.queue {
-                        Self::insert_file_into_db(&mut stmt, &elem.parent, &elem.prg);
+                        for elem in &self.queue {
+                            Self::insert_file_into_db(&mut stmt, &elem.parent, &elem.prg);
+                        }
+                        self.queue.clear();
                     }
-                    self.queue.clear();
+                    tx.commit()
+                        .unwrap_or_else(|_| println!("failed to commit transaction"));
                 }
-                tx.commit()
-                    .unwrap_or_else(|_| println!("failed to commit transaction"));
             }
         }
     }

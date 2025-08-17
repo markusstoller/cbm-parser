@@ -67,6 +67,35 @@ pub mod cbm {
         /// This function does not provide detailed error information. If detailed error handling
         /// is required, consider implementing a more descriptive error reporting mechanism.
         fn parse_file(&mut self, path: &str) -> bool;
+        /// Parses data from the provided buffer and updates the internal state of the struct.
+        ///
+        /// # Arguments
+        ///
+        /// * `buffer` - A slice of bytes (`&[u8]`) containing the data to be parsed.
+        ///
+        /// # Returns
+        ///
+        /// * `bool` - Returns `true` if parsing was successful, `false` otherwise.
+        ///
+        /// # Remarks
+        ///
+        /// This function processes the given buffer and extracts meaningful information
+        /// to update the struct's internal properties or state. If the buffer doesn't
+        /// contain valid or sufficient data for parsing, the function will return `false`.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// let mut obj = MyStruct::new();
+        /// let buffer: &[u8] = &[0x01, 0x02, 0x03];
+        /// let result = obj.parse_from_buffer(buffer);
+        /// assert!(result);
+        /// ```
+        ///
+        /// # Safety
+        ///
+        /// Ensure the buffer provided is valid and has the expected format to avoid unexpected behavior.
+        fn parse_from_buffer(&mut self, buffer: &[u8]) -> bool;
         /// Retrieves the total number of sectors.
         ///
         /// This method returns the count of sectors associated with the implementing object.
@@ -811,6 +840,41 @@ pub mod cbm {
                 return self.parse_disk();
             }
             false
+        }
+
+        /// Parses data from a given byte buffer and updates the internal state.
+        ///
+        /// This function takes a slice of bytes, copies the contents
+        /// into the internal `data` variable, and then calls the `parse_disk`
+        /// method to handle further parsing or processing.
+        ///
+        /// # Arguments
+        ///
+        /// * `buffer` - A slice of bytes (`&[u8]`) that contains the data to be parsed.
+        ///
+        /// # Returns
+        ///
+        /// * `bool` - The function is expected to return a boolean value indicating
+        ///            the success or failure of the operation. However, the current
+        ///            implementation does not explicitly return a value, which may
+        ///            cause a compilation error.
+        ///
+        /// # Note
+        ///
+        /// Ensure that the function has the correct return value (`true` or `false`)
+        /// to match the expected return type (`bool`). The current implementation
+        /// is missing an explicit return statement.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// let mut obj = YourStruct::new();
+        /// let buffer = vec![1, 2, 3, 4];
+        /// let success = obj.parse_from_buffer(&buffer);
+        /// ```
+        fn parse_from_buffer(&mut self, buffer: &[u8]) -> bool {
+            self.data = buffer.to_vec();
+            self.parse_disk()
         }
 
         /// Returns the number of sectors.

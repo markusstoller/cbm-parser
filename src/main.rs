@@ -7,13 +7,15 @@ use disk::cbm::{D64, DiskParser};
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::DirEntry;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::*;
 use utils::helper::Element;
 use utils::helper::{Database, SqliteHandler};
-// Add to Cargo.toml
+use zip::ZipArchive;
 
 /// Simple d64 parser
 #[derive(Parser, Debug)]
@@ -36,64 +38,51 @@ struct Args {
     verbose: bool,
 }
 
-/// Processes a `.d64` file and stores information about its contained files into a utils.
+/// Processes a D64 disk image buffer, extracts files, and adds entries to a database via a helper.
 ///
-/// This function reads the provided `.d64` file (a Commodore 64 disk image),
-/// retrieves all files stored within it, and inserts their metadata into a
-/// utils. If the `.d64` file cannot be loaded, or no files are found, the
-/// function will return `false`. Otherwise, it returns `true`.
+/// This function takes a buffer representation of a D64 disk image, parses it using the `D64`
+/// instance, and processes each file found in the image. For each file that is not a directory,
+/// an entry is added to the database using the provided `SqliteHandler`.
 ///
-/// # Arguments
+/// If the image cannot be loaded or no files are found, appropriate messages are logged, and
+/// the function returns `false`.
 ///
-/// * `parent_file` - A string slice that holds the path to the `.d64` file to be processed.
-/// * `conn` - A mutable reference to a utils `Connection` object used for storing file metadata.
+/// # Parameters
+/// - `buffer`: A slice of bytes representing the D64 image to be processed.
+/// - `parent_file`: A string slice specifying the name of the parent file from which the D64
+///   image was derived.
+/// - `helper`: A reference-counted, thread-safe wrapper (`Arc<Mutex<SqliteHandler>`) allowing
+///   safe concurrent access to the database handler.
 ///
 /// # Returns
-///
-/// * `true` if the file was successfully processed and its metadata stored in the utils.
-/// * `false` if the file couldn't be loaded or no files were found within the disk image.
+/// - `true` if the D64 image was successfully loaded and files were processed.
+/// - `false` if the image could not be loaded or no files were found.
 ///
 /// # Behavior
+/// - Initializes a `D64` object and disables debug output.
+/// - Attempts to parse the `buffer` as a D64 image.
+/// - Logs an error if the image cannot be loaded.
+/// - Iterates through all files in the image, excluding directories, and for each file:
+///   - Creates an `Element` object with file data and the parent file name.
+///   - Adds it to the database using the `SqliteHandler`.
+/// - Logs an error if no files are found.
 ///
-/// 1. Creates a new instance of the `D64` parser.
-/// 2. Disables debug output and attempts to parse the `.d64` file provided in `parent_file`.
-/// 3. If the `.d64` file is loaded successfully, retrieves all contained files.
-/// 4. For each file:
-///     - Skips if the file is marked as a directory.
-///     - Outputs details such as filename, track, sector, length, and SHA-256 hash.
-///     - Inserts the file's metadata (e.g., parent file name, track, sector, length, hashes) into the utils.
-/// 5. Commits the transaction after processing all files.
+/// ```rust
+/// // Example usage:
+/// let buffer = std::fs::read("disk_image.d64").unwrap();
+/// let parent_file = "parent_file.d64";
+/// let helper = Arc::new(Mutex::new(SqliteHandler::new("database.db")));
 ///
-/// # Errors
-///
-/// * If the transaction fails to be created, the function will `unwrap` and panic.
-/// * If the `.d64` file cannot be parsed, no metadata will be stored, and the transaction will still be committed.
-/// * If the SQL insertion statements or `D64` operations fail, the application will panic.
-///
-/// # Logging
-///
-/// - Outputs a message if the `.d64` file cannot be loaded.
-/// - Outputs file metadata if files are found and processed.
-/// - Outputs a message if no valid files are found in the `.d64` image.
-///
-/// # Example
-///
-/// ```
-/// use rusqlite::Connection;
-///
-/// let mut conn = Connection::open_in_memory().unwrap();
-/// let result = process_d64_file("/path/to/image.d64", &mut conn);
-/// if result {
-///     println!("File processed successfully.");
+/// if process_d64_image(&buffer, parent_file, &helper) {
+///     println!("D64 image processed successfully");
 /// } else {
-///     println!("Failed to process file.");
+///     println!("Failed to process D64 image");
 /// }
 /// ```
-fn process_d64_file(parent_file: &str, helper: &Arc<Mutex<SqliteHandler>>) -> bool {
+fn process_d64_image(buffer: &[u8], parent_file: &str, helper: &Arc<Mutex<SqliteHandler>>) -> Result<bool, String> {
     let mut d64 = D64::new();
-    if !d64.set_debug_output(false).parse_file(parent_file) {
-        println!("file not loaded");
-        return false;
+    if !d64.set_debug_output(false).parse_from_buffer(buffer) {
+        return Err("file not loaded".to_string());
     }
 
     if let Some(files) = d64.get_all_files() {
@@ -117,11 +106,50 @@ fn process_d64_file(parent_file: &str, helper: &Arc<Mutex<SqliteHandler>>) -> bo
 
              */
         }
-        true
+        return Ok(true);
     } else {
-        println!("no files found");
-        false
+        Err("no files found".to_string())
     }
+}
+
+/// Processes a `.d64` file by reading its contents and passing it to a handler.
+///
+/// # Arguments
+///
+/// * `parent_file` - A string slice that holds the file path to the `.d64` file to be processed.
+/// * `helper` - An `Arc` wrapped `Mutex` containing a `SqliteHandler` instance,
+///   which is used as a helper to manage database operations.
+///
+/// # Returns
+///
+/// * A `bool` indicating whether the file was successfully processed (`true` for success, `false` for failure).
+///
+/// # Behavior
+///
+/// 1. Attempts to read the contents of the file specified by `parent_file`.
+/// 2. If the file is successfully read, the contents are passed to the `process_d64_image` function
+///    along with `parent_file` and `helper` for further processing.
+/// 3. If the file cannot be read, logs "file not loaded" to the console and returns `false`.
+///
+/// # Example
+///
+/// ```rust
+/// let handler = Arc::new(Mutex::new(SqliteHandler::new("database.db")));
+/// let process_result = process_d64_file("example.d64", &handler);
+/// println!("Processing result: {}", process_result);
+/// ```
+fn process_d64_file(parent_file: &str, helper: &Arc<Mutex<SqliteHandler>>) -> i32 {
+    let buffer = fs::read(parent_file);
+    if buffer.is_ok() {
+        if let Err(result) = process_d64_image(buffer.unwrap().as_slice(), parent_file, helper) {
+            println!("file not processed - error: {}", result);
+        } else {
+            return 1;
+        }
+    } else {
+        println!("file not loaded");
+    }
+    0
 }
 
 /// Extracts the file extension from a given filename if it exists.
@@ -158,6 +186,139 @@ fn process_d64_file(parent_file: &str, helper: &Arc<Mutex<SqliteHandler>>) -> bo
 /// the extension from an `OsStr` to a `&str` for ease of use.
 fn get_extension_from_filename(filename: &str) -> Option<&str> {
     Path::new(filename).extension().and_then(OsStr::to_str)
+}
+
+/// Processes a `.zip` file: opens the archive, finds all `.d64` entries, parses them,
+/// and forwards each to the database via the existing D64 buffer parser.
+///
+/// Returns true if at least one `.d64` entry was successfully processed.
+fn process_zip_file(zip_path: &str, helper: &Arc<Mutex<SqliteHandler>>) -> i32 {
+    let mut files_processed_ok: i32 = 0;
+
+    let file = match File::open(zip_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to open zip file {}: {}", zip_path, e);
+            return 0;
+        }
+    };
+
+    let mut archive = match ZipArchive::new(file) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to read zip archive {}: {}", zip_path, e);
+            return 0;
+        }
+    };
+
+    for i in 0..archive.len() {
+        let mut entry = match archive.by_index(i) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Failed to access zip entry {} in {}: {}", i, zip_path, e);
+                continue;
+            }
+        };
+        if !entry.is_file() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        if let Some(ext) = get_extension_from_filename(&name) {
+            if ext.eq_ignore_ascii_case("d64") {
+                let mut buf = Vec::new();
+                if let Err(e) = entry.read_to_end(&mut buf) {
+                    eprintln!("Failed to read entry {} in {}: {}", name, zip_path, e);
+                    continue;
+                }
+                let parent = format!("{}!{}", zip_path, name);
+                if let Err(result) = process_d64_image(&buf, &parent, helper) {
+                    eprintln!("Failed to process entry {} in {} - Error {}", name, zip_path, result);
+                } else {
+                    files_processed_ok += 1;
+                }
+            }
+        }
+    }
+
+    files_processed_ok
+}
+
+/// Processes a `.7z` archive file, extracting its contents and handling `.d64` files within.
+///
+/// # Parameters
+/// - `archive_path`: A string slice representing the file path to the `.7z` archive.
+/// - `helper`: An `Arc<Mutex<SqliteHandler>>` instance used for database-related operations.
+///
+/// # Returns
+/// - A `bool` indicating success or failure. This function currently always returns `false`.
+///
+/// # Panics
+/// The function will panic if:
+/// - The `.7z` archive cannot be opened using the `sevenz_rust2::ArchiveReader`.
+/// - An error occurs while reading or processing the entries in the archive.
+///
+/// # Details
+/// 1. The function attempts to open and read entries from the `.7z` archive specified by `archive_path`.
+/// 2. For each entry in the archive:
+///    - If the file extension is `.d64` (case-insensitive), the entry's data is read into a buffer.
+///    - The `process_d64_image` function is called to handle the buffer.
+///      - If the processing fails, an error is printed to `stderr`.
+/// 3. The function currently always returns `false`, regardless of success or failure.
+///
+/// # Notes
+/// - Entries without a `.d64` extension are ignored.
+/// - The `get_extension_from_filename` function is assumed to extract the file extension from the entry name.
+/// - The `process_d64_image` function is responsible for handling `.d64` file data and utilizes the provided `SqliteHandler`.
+/// - The archive password is currently hardcoded as `"pass"`.
+///
+/// # Example
+/// ```rust
+/// use std::sync::{Arc, Mutex};
+///
+/// let sqlite_handler = Arc::new(Mutex::new(SqliteHandler::new()));
+/// let archive_path = "path/to/archive.7z";
+///
+/// let result = process_7z_file(archive_path, &sqlite_handler);
+/// println!("Processing result: {}", result);
+/// ```
+///
+/// # Limitations
+/// - This function does not provide robust error handling.
+/// - The return value does not reflect the success of the archive processing; it always returns `false`.
+/// - The archive password is hardcoded and cannot be customized.
+fn process_7z_file(archive_path: &str, helper: &Arc<Mutex<SqliteHandler>>) -> i32 {
+    // Try to decompress the 7z archive into the temp directory.
+    let mut sz = sevenz_rust2::ArchiveReader::open(archive_path, "pass".into()).unwrap();
+    let mut file_buffer: Vec<u8> = Vec::new();
+    let mut files_processed_ok: i32 = 0;
+
+    sz.for_each_entries(|entry, reader| {
+        file_buffer.clear();
+        let name = entry.name().to_string();
+        if let Some(ext) = get_extension_from_filename(&name) {
+            if ext.eq_ignore_ascii_case("d64") {
+                let mut buf = [0u8; 1024];
+                loop {
+                    let read_size = reader.read(&mut buf)?;
+                    if read_size == 0 {
+                        break;
+                    }
+                    file_buffer.append(&mut buf[..read_size].to_vec());
+                }
+
+                let parent = format!("{}!{}", archive_path, name);
+                if let Err(result) = process_d64_image(&file_buffer, &parent, helper) {
+                    eprintln!("Failed to process entry {} in {} - Error {}", name, archive_path, result);
+                } else {
+                    files_processed_ok += 1;
+                }
+            }
+        }
+        return Ok(true);
+    })
+    .unwrap();
+
+    files_processed_ok
 }
 
 /// Asynchronous worker function that processes file paths received through a channel
@@ -229,10 +390,18 @@ async fn consumer(
             if let Some(file_path) = path.path().to_str() {
                 if let Some(extension) = get_extension_from_filename(file_path) {
                     // todo - replace by btreemap
-                    if extension == "d64" {
-                        println!("Processing file: {}", file_path);
-                        process_d64_file(file_path, &helper);
-                        files_parsed.fetch_add(1, Ordering::Relaxed);
+                    if extension.eq_ignore_ascii_case("d64") {
+                        println!("Processing d64: {}", file_path);
+                        files_parsed
+                            .fetch_add(process_d64_file(file_path, &helper), Ordering::Relaxed);
+                    } else if extension.eq_ignore_ascii_case("zip") {
+                        println!("Processing zip: {}", file_path);
+                        files_parsed
+                            .fetch_add(process_zip_file(file_path, &helper), Ordering::Relaxed);
+                    } else if extension.eq_ignore_ascii_case("7z") {
+                        println!("Processing 7z: {}", file_path);
+                        files_parsed
+                            .fetch_add(process_7z_file(file_path, &helper), Ordering::Relaxed);
                     }
                 };
             }
