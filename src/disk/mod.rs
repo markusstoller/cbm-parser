@@ -35,16 +35,33 @@ pub mod cbm {
         ///
         /// Use this method to toggle debug output for logging or diagnostic purposes.
         fn set_debug_output(&mut self, debug_output: bool) -> &mut Self;
-        /// Parses the input and updates the state of the calling object.
+        /// Parses the disk and performs necessary operations to process its contents.
+        ///
+        /// This function is used to handle disk-related data or metadata, performing
+        /// specific parsing logic based on the implementation. It returns a result
+        /// indicating the success or failure of the operation.
         ///
         /// # Returns
-        /// * `true` if the parsing is successful.
-        /// * `false` otherwise.
+        /// - `Ok(true)`: If the disk parsing was successful and no errors were encountered.
+        /// - `Ok(false)`: If the parsing completed but was not successful (e.g., disk might be empty or skipped).
+        /// - `Err(String)`: If an error occurred during disk parsing. The error message provides details of the issue.
         ///
-        /// # Behavior
-        /// This method modifies the internal state of the object based on the input being parsed.
-        /// The parsing logic should ensure that the object remains in a consistent state
-        fn parse_disk(&mut self) -> bool;
+        /// # Errors
+        /// This function can return an error in one of the following scenarios:
+        /// - Disk could not be accessed.
+        /// - Data on the disk is corrupt or unreadable.
+        /// - Unexpected issues during parsing.
+        ///
+        /// # Examples
+        /// ```rust
+        /// let mut parser = Parser::new();
+        /// match parser.parse_disk() {
+        ///     Ok(true) => println!("Disk parsed successfully."),
+        ///     Ok(false) => println!("Disk parsing was not successful."),
+        ///     Err(e) => println!("Failed to parse disk: {}", e),
+        /// }
+        /// ```
+        fn parse_disk(&mut self) -> Result<bool, String>;
         /// Parses a file located at the given file path and updates internal state based on its contents.
         ///
         /// # Parameters
@@ -66,7 +83,7 @@ pub mod cbm {
         /// # Errors
         /// This function does not provide detailed error information. If detailed error handling
         /// is required, consider implementing a more descriptive error reporting mechanism.
-        fn parse_file(&mut self, path: &str) -> bool;
+        fn parse_file(&mut self, path: &str) -> Result<bool, String>;
         /// Parses data from the provided buffer and updates the internal state of the struct.
         ///
         /// # Arguments
@@ -95,7 +112,7 @@ pub mod cbm {
         /// # Safety
         ///
         /// Ensure the buffer provided is valid and has the expected format to avoid unexpected behavior.
-        fn parse_from_buffer(&mut self, buffer: &[u8]) -> bool;
+        fn parse_from_buffer(&mut self, buffer: &[u8]) -> Result<bool, String>;
         /// Retrieves the total number of sectors.
         ///
         /// This method returns the count of sectors associated with the implementing object.
@@ -798,17 +815,17 @@ pub mod cbm {
         ///
         /// # Notes
         /// Ensure that `parse_sectors` is implemented correctly for this function to work seamlessly.
-        fn parse_disk(&mut self) -> bool {
+        fn parse_disk(&mut self) -> Result<bool, String> {
             if self.data.is_empty() {
-                return false;
+                return Err("disk is empty".to_string());
             }
 
             if self.data.len() != self.disk_size {
-                println!("Invalid file size");
-                return false;
+                return Err(format!("invalid file size: {}", self.data.len()));
             }
 
-            self.parse_sectors()
+            self.parse_sectors();
+            Ok(true)
         }
 
         /// Parses a file from the given path and processes its content.
@@ -835,11 +852,11 @@ pub mod cbm {
         /// let result = parser.parse_file("example.txt");
         /// assert_eq!(result, false); // Due to hardcoded false return
         /// ```
-        fn parse_file(&mut self, path: &str) -> bool {
+        fn parse_file(&mut self, path: &str) -> Result<bool, String> {
             if let Ok(()) = self.load_file(path) {
                 return self.parse_disk();
             }
-            false
+            Err("failed to load file".to_string())
         }
 
         /// Parses data from a given byte buffer and updates the internal state.
@@ -872,7 +889,7 @@ pub mod cbm {
         /// let buffer = vec![1, 2, 3, 4];
         /// let success = obj.parse_from_buffer(&buffer);
         /// ```
-        fn parse_from_buffer(&mut self, buffer: &[u8]) -> bool {
+        fn parse_from_buffer(&mut self, buffer: &[u8]) -> Result<bool, String> {
             self.data = buffer.to_vec();
             self.parse_disk()
         }
