@@ -2,6 +2,7 @@
 name = "cbm-parser"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/markusstoller/cbm-parser"
 
 [dependencies]
 md5="*"
@@ -16,3 +17,8 @@ tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros"] }
 clap = { version = "*", features = ["derive"] }
 zip = "*"
 sevenz-rust2 = "*"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
