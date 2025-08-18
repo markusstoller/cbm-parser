@@ -8,14 +8,13 @@ use disk::cbm::{D64, DiskParser};
 use processor::collector::FileParser;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::fs;
-use std::fs::DirEntry;
 use std::path::Path;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
+use tokio::time::Duration;
 use tokio::*;
-use utils::helper::Element;
-use utils::helper::{Database, SqliteHandler};
+use utils::helper::{Database, Element, SqliteHandler};
+use walkdir::{DirEntry, WalkDir};
 
 /// Simple d64 parser
 #[derive(Parser, Debug)]
@@ -111,8 +110,6 @@ fn process_d64_image(
                 prg: file,
                 parent: parent_file.to_string(),
             });
-
-
         }
         Ok(true)
     } else {
@@ -264,12 +261,13 @@ fn create_parsers() -> BTreeMap<&'static str, Box<dyn FileParser>> {
 async fn consumer(
     rx: Receiver<DirEntry>,
     files_parsed: Arc<AtomicI32>,
+    files_attempted: Arc<AtomicI32>,
     helper: Arc<Mutex<SqliteHandler>>,
 ) {
     let parsers = create_parsers();
 
     while let Ok(path) = rx.recv().await {
-        if !path.file_type().unwrap().is_file() {
+        if !path.file_type().is_file() {
             continue;
         }
 
@@ -279,6 +277,8 @@ async fn consumer(
             };
 
             if let Some(handler) = parsers.get(extension.to_lowercase().as_str()) {
+                // Count this file as attempted, regardless of success
+                files_attempted.fetch_add(1, Ordering::Relaxed);
                 handler
                     .parse(file_path, &|buffer: &[u8], parent_file: &str| {
                         if let Err(result) = process_d64_image(buffer, parent_file, &helper) {
@@ -291,6 +291,233 @@ async fn consumer(
             } else {
                 println!("file not processed {} - unknown extension", &file_path);
             }
+        }
+    }
+}
+
+/// Shared state for tracking progress across all workers
+struct ProgressState {
+    files_parsed: Arc<AtomicI32>,
+    files_attempted: Arc<AtomicI32>,
+    total_files: Arc<AtomicI32>,
+}
+
+impl ProgressState {
+    fn new() -> Self {
+        Self {
+            files_parsed: Arc::new(AtomicI32::new(0)),
+            files_attempted: Arc::new(AtomicI32::new(0)),
+            total_files: Arc::new(AtomicI32::new(0)),
+        }
+    }
+
+    fn signal_completion(&self) {
+        self.total_files.store(-1, Ordering::Relaxed);
+    }
+
+    fn print_final_count(&self) {
+        println!("{} files parsed", self.files_parsed.load(Ordering::Relaxed));
+    }
+}
+
+/// Spawns an asynchronous task to continuously report progress of a file processing operation.
+///
+/// This function takes a reference to a `ProgressState` struct that tracks the number of files
+/// attempted and the total number of files to be processed. It creates an asynchronous task that
+/// periodically prints the progress (every second) to the console in the format:
+///
+/// `Progress: X / Y files processed`
+///
+/// where `X` is the number of files attempted so far, and `Y` is the total number of files.
+///
+/// ### Arguments
+/// - `progress`: A reference to a `ProgressState` structure. This structure contains counters for
+///   `files_attempted` and `total_files`. These counters are shared between threads and updated atomically.
+///
+/// ### Behavior
+/// - The function clones the atomic counters for `files_attempted` and `total_files` to be used in the spawned task.
+/// - Inside the task:
+///   - It periodically checks the current progress (attempted and total files).
+///   - If the number of attempted files has changed since the last iteration, it prints the current progress to the console.
+///   - The loop exits when `total_files` is set to `-1`, indicating that the task should terminate.
+///
+/// ### Note
+/// - The task runs asynchronously in a loop and uses `tokio::time::sleep` to wait 1 second between progress checks.
+///
+/// ### Example Usage
+/// ```rust
+/// let progress_state = ProgressState {
+///     files_attempted: Arc::new(AtomicI32::new(0)),
+///     total_files: Arc::new(AtomicI32::new(100)) // Example total files count
+/// };
+///
+/// spawn_progress_reporter(&progress_state);
+///
+/// // Simulate file processing
+/// for i in 0..100 {
+///     progress_state.files_attempted.store(i + 1, Ordering::Relaxed); // Update attempted count
+///     tokio::time::sleep(Duration::from_millis(50)).await; // Simulated delay
+/// }
+///
+/// progress_state.total_files.store(-1, Ordering::Relaxed); // Signal completion
+/// ```
+///
+/// ### Requirements
+/// - This function requires the use of the Tokio runtime to execute asynchronous tasks.
+/// - Ensure proper synchronization (using atomic counters) for shared progress state between threads.
+///
+/// ### Limitations
+/// - Progress is printed to the console every second and will not update more frequently even if progress changes rapidly.
+/// - The function assumes that `total_files` is set to `-1` explicitly to indicate task completion.
+fn spawn_progress_reporter(progress: &ProgressState) {
+    let files_attempted = progress.files_attempted.clone();
+    let total_files = progress.total_files.clone();
+
+    spawn(async move {
+        let mut last_printed = -1; // sentinel to force initial print
+        loop {
+            let attempted = files_attempted.load(Ordering::Relaxed);
+            let total = total_files.load(Ordering::Relaxed);
+
+            if attempted != last_printed {
+                println!("Progress: {} / {} files processed", attempted, total);
+                last_printed = attempted;
+            }
+
+            if total == -1 {
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+}
+
+/// Cleans up worker tasks and ensures proper shutdown of the database.
+///
+/// # Arguments
+///
+/// * `children` - A vector of asynchronous task join handles representing worker threads to be awaited and cleaned up.
+/// * `progress` - A reference to a `ProgressState` object used to signal completion and display final progress updates.
+/// * `sqlite` - A reference-counted and thread-safe mutex wrapping a `SqliteHandler`, which is responsible for managing the database connection.
+///
+/// # Behavior
+///
+/// 1. Waits for all worker threads to complete. If any thread fails, logs the error to standard error output.
+/// 2. Signals the progress state to indicate that all workers have completed.
+/// 3. Closes the database connection safely, ensuring the connection is properly shut down. If this operation fails, it panics with an error message.
+/// 4. Prints the final progress count after all operations are complete.
+///
+/// # Panics
+///
+/// Panics if the database connection cannot be safely closed.
+///
+/// # Errors
+///
+/// Errors during worker thread completion (via `JoinHandle`) are logged to standard error but do not propagate.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::sync::{Arc, Mutex};
+/// use tokio::task;
+///
+/// struct ProgressState;
+/// impl ProgressState {
+///     fn signal_completion(&self) { /* implementation */ }
+///     fn print_final_count(&self) { /* implementation */ }
+/// }
+///
+/// struct SqliteHandler;
+/// impl SqliteHandler {
+///     fn close(&self) -> Result<(), &'static str> {
+///         // Close database connection
+///         Ok(())
+///     }
+/// }
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let workers: Vec<task::JoinHandle<()>> = vec![];
+///     let progress = ProgressState;
+///     let sqlite = Arc::new(Mutex::new(SqliteHandler));
+///
+///     cleanup_workers_and_db(workers, &progress, sqlite).await;
+/// }
+/// ```
+async fn cleanup_workers_and_db(
+    children: Vec<task::JoinHandle<()>>,
+    progress: &ProgressState,
+    sqlite: Arc<Mutex<SqliteHandler>>,
+) {
+    // Wait for all workers to complete
+    for child in children {
+        if let Err(e) = child.await {
+            eprintln!("Worker thread failed: {:?}", e);
+        }
+    }
+
+    progress.signal_completion();
+
+    // Ensure proper shutdown of the database connection
+    sqlite
+        .lock()
+        .unwrap()
+        .close()
+        .expect("Failed to close database");
+
+    progress.print_final_count();
+}
+
+/// Asynchronously processes a directory by walking through its files, filtering them based on supported parsers,
+/// and sending each valid file entry to a provided channel for further processing.
+///
+/// # Parameters
+/// - `args`: A reference to an `Args` struct containing configuration details, including the target directory path to process.
+/// - `progress`: A shared `ProgressState` object used to track the total number of processed files.
+/// - `tx`: A reference to the `Sender` channel used to send valid file entries (`DirEntry`) to worker tasks for further processing.
+/// - `supported_parsers`: A map of file extensions (`&str`) to their corresponding file parsers (`Box<dyn FileParser>`),
+///   used to determine which files are supported for processing.
+///
+/// # Behavior
+/// - Iterates through all entries in the directory specified in `args`.
+/// - Filters entries to include only files with extensions that are supported by the provided `supported_parsers`.
+///   The extensions are matched case-insensitively.
+/// - For each valid file, increments the `ProgressState`'s `total_files` counter.
+/// - Sends each valid file entry (`DirEntry`) to the provided channel. If sending fails due to a disconnected receiver,
+///   the loop exits early and prints an error to `stderr`.
+///
+/// # Errors
+/// - If the sender channel (`tx`) is closed or disconnected, sending a file entry will fail, and no further files will be processed.
+///
+/// # Notes
+/// - This function uses the `WalkDir` crate to recursively traverse the directory structure.
+/// - Directory entries without valid UTF-8 paths or unsupported extensions are ignored.
+/// - The file extension matching is performed in a case-insensitive manner.
+async fn process_directory(
+    args: &&Args,
+    progress: &ProgressState,
+    tx: &Sender<DirEntry>,
+    supported_parsers: BTreeMap<&str, Box<dyn FileParser>>,
+) {
+    // Process files in the directory
+    for entry in WalkDir::new(&args.path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| {
+            if let Some(path_str) = entry.path().to_str() {
+                if let Some(ext) = get_extension_from_filename(path_str) {
+                    return supported_parsers.contains_key(ext.to_lowercase().as_str());
+                }
+            }
+            false
+        })
+    {
+        progress.total_files.fetch_add(1, Ordering::Relaxed);
+        if let Err(_) = tx.send(entry).await {
+            eprintln!("Failed to send file path to worker");
+            break;
         }
     }
 }
@@ -310,76 +537,37 @@ async fn consumer(
 ///
 /// # Workflow
 ///
-/// 1. Creates shared atomic and mutex-controlled resources:
-///    - `files_parsed`: An `AtomicI32` to track the number of processed files.
-///    - `sqlite`: A `Mutex` holding a `SqliteHandler` to manage database operations.
-/// 2. Sets up an unbounded channel (`tx`, `rx`) for sending file paths from the producer to consumers.
-///    - Spawns `args.threads` worker threads that run the `consumer` function, each receiving a copy
-///      of the channel's receiver (`rx`) and shared resources.
-/// 3. Iterates through the files in the directory specified by `args.path`:
-///    - Successfully resolved file paths are sent through the channel to workers.
-///    - If sending fails, the error is logged, and the loop breaks.
-/// 4. Closes the sending side of the channel to signal workers that no more data will be sent.
-/// 5. Waits for all worker threads to complete their execution:
-///    - Logs any errors encountered during thread execution.
-/// 6. Ensures proper shutdown of the database connection by locking and closing `sqlite`.
-/// 7. Outputs the total count of files processed as recorded in the `files_parsed` counter.
+/// 1. Creates shared atomic and mutex-controlled resources for progress tracking and database access.
+/// 2. Sets up an unbounded channel for sending file paths from the producer to consumers.
+/// 3. Spawns worker threads and a progress reporter.
+/// 4. Iterates through supported files in the directory, sending paths to workers.
+/// 5. Waits for all workers to complete and ensures proper database shutdown.
 ///
 /// # Errors
 ///
-/// This function logs errors related to:
-/// * Failed attempts to send file paths to the worker channel.
-/// * Worker threads that encounter errors during execution.
-///
-/// # Remarks
-///
-/// * The `files_parsed` atomic counter is accessed using the `Relaxed` ordering mode.
-/// * This function ensures thread-safe shared resource access with `Arc` and proper synchronization mechanisms.
-/// * Error handling is minimal and focuses mainly on logging issues rather than fully resolving them.
+/// This function logs errors related to failed channel sends and worker thread execution.
 async fn producer(args: &Args) {
-    let files_parsed: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
+    let progress = ProgressState::new();
     let sqlite = Arc::new(Mutex::new(SqliteHandler::new(&args.dbfile)));
-
     let (tx, rx) = unbounded();
     let mut children = Vec::new();
 
+    // Spawn worker threads
     for _ in 0..args.threads {
         let rx_thread = rx.clone();
         children.push(spawn(consumer(
             rx_thread,
-            files_parsed.clone(),
+            progress.files_parsed.clone(),
+            progress.files_attempted.clone(),
             sqlite.clone(),
         )));
     }
 
-    if let Ok(paths) = fs::read_dir(&args.path) {
-        for path in paths.filter_map(Result::ok) {
-            if let Err(_) = tx.send(path).await {
-                eprintln!("Failed to send file path to worker");
-                break;
-            }
-        }
-    }
-
+    let supported_parsers = create_parsers();
+    spawn_progress_reporter(&progress);
+    process_directory(&args, &progress, &tx, supported_parsers).await;
     tx.close();
-
-    for child in children {
-        if let Err(e) = child.await {
-            eprintln!("Worker thread failed: {:?}", e);
-        }
-    }
-
-    // Ensure proper shutdown of the database connection/write out remaining data.
-    sqlite
-        .lock()
-        .unwrap()
-        .close()
-        .expect("Failed to close database");
-
-    println!(
-        "{} files parsed",
-        files_parsed.load(Ordering::Relaxed).to_string()
-    );
+    cleanup_workers_and_db(children, &progress, sqlite).await;
 }
 
 /// The asynchronous main function is the entry point of the application.

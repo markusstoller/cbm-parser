@@ -13,10 +13,11 @@ petscii="*"
 hex-slice="*"
 rusqlite = { version = "0.31", features = ["bundled"] }
 async-channel="*"
-tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 clap = { version = "*", features = ["derive"] }
 zip = "*"
 sevenz-rust2 = "*"
+walkdir = "2"
 
 # The profile that 'dist' will build with
 [profile.dist]
