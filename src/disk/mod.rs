@@ -1,216 +1,9 @@
+mod parser;
+
 pub mod cbm {
     use endian_codec::{DecodeLE, EncodeLE, PackedSize};
     use sha1::{Digest, Sha1};
-
-    /// The `DiskParser` trait defines an interface for parsing and manipulating `.D64` disk image files.
-    /// Implementing this trait provides methods for parsing sectors, loading files, and interacting
-    /// with the tracks and sectors of the disk.
-    pub(crate) trait DiskParser {
-        /// Sets the debug output mode for the current instance.
-        ///
-        /// # Parameters
-        /// - `debug_output`: A boolean value indicating whether to enable (`true`) or disable (`false`) debug output.
-        ///
-        /// # Returns
-        /// - A mutable reference to the current instance (`&mut Self`), allowing method chaining.
-        ///
-        /// # Example
-        /// ```
-        /// let mut instance = Example::new();
-        /// instance.set_debug_output(true)
-        ///        .perform_action();
-        /// ```
-        ///
-        /// Use this method to toggle debug output for logging or diagnostic purposes.
-        fn set_debug_output(&mut self, debug_output: bool) -> &mut Self;
-        /// Parses a file located at the given file path and updates internal state based on its contents.
-        ///
-        /// # Parameters
-        /// - `path`: A string slice that holds the path to the file to be parsed.
-        ///           This should point to a valid file location on the filesystem.
-        ///
-        /// # Returns
-        /// - `true` if the file was successfully parsed and the internal state was updated.
-        /// - `false` if the parsing failed (e.g., due to the file not existing, being inaccessible,
-        ///   or containing invalid data).
-        ///
-        /// # Examples
-        /// ```
-        /// let mut parser = FileParser::new();
-        /// let success = parser.parse_file("config.txt");
-        /// assert!(success);
-        /// ```
-        ///
-        /// # Errors
-        /// This function does not provide detailed error information. If detailed error handling
-        /// is required, consider implementing a more descriptive error reporting mechanism.
-        fn parse_file(&mut self, path: &str) -> Result<bool, String>;
-        /// Parses data from the provided buffer and updates the internal state of the struct.
-        ///
-        /// # Arguments
-        ///
-        /// * `buffer` - A slice of bytes (`&[u8]`) containing the data to be parsed.
-        ///
-        /// # Returns
-        ///
-        /// * `bool` - Returns `true` if parsing was successful, `false` otherwise.
-        ///
-        /// # Remarks
-        ///
-        /// This function processes the given buffer and extracts meaningful information
-        /// to update the struct's internal properties or state. If the buffer doesn't
-        /// contain valid or sufficient data for parsing, the function will return `false`.
-        ///
-        /// # Example
-        ///
-        /// ```
-        /// let mut obj = MyStruct::new();
-        /// let buffer: &[u8] = &[0x01, 0x02, 0x03];
-        /// let result = obj.parse_from_buffer(buffer);
-        /// assert!(result);
-        /// ```
-        ///
-        /// # Safety
-        ///
-        /// Ensure the buffer provided is valid and has the expected format to avoid unexpected behavior.
-        fn parse_from_buffer(&mut self, buffer: &[u8]) -> Result<bool, String>;
-        /// Retrieves the total number of sectors.
-        ///
-        /// This method returns the count of sectors associated with the implementing object.
-        /// The exact meaning of a "sector" may depend on the particular implementation and its context.
-        ///
-        /// # Returns
-        /// - `usize`: The total number of sectors.
-        ///
-        /// # Examples
-        /// ```
-        /// let sector_count = my_object.get_sector_count();
-        fn get_sector_count(&self) -> usize;
-        /// Retrieves a sector based on the given sector identifier.
-        ///
-        /// # Parameters
-        /// - `sector`: An `i32` value representing the identifier of the sector to retrieve.
-        ///
-        /// # Returns
-        /// - `Some(Sector)` if a sector corresponding to the given identifier is found.
-        /// - `None` if no sector matches the given identifier.
-        ///
-        /// # Examples
-        /// ```
-        /// let map = Map::new();
-        /// if let Some(sector) = map.get_sector(5) {
-        ///     println!("Sector found: {:?}", sector);
-        /// } else {
-        ///     println!("Sector not found.");
-        /// }
-        /// ```
-        fn get_sector(&self, sector: i32) -> Option<Sector>;
-        /// Creates a new instance of the implementing type.
-        ///
-        /// # Returns
-        /// A new instance of `Self`.
-        ///
-        /// # Example
-        /// ```rust
-        /// let instance = ImplementingType::new();
-        /// ```
-        fn new() -> Self;
-        /// Retrieves the track number associated with the given sector.
-        ///
-        /// # Parameters
-        /// - `sector`: An integer representing the sector for which the track number is to be retrieved.
-        ///
-        /// # Returns
-        /// - `Some(i32)`: The track number corresponding to the specified sector, if it exists.
-        /// - `None`: If no track is associated with the specified sector.
-        ///
-        /// # Example
-        /// ```rust
-        /// let track = some
-        fn get_track_info_for_raw_sector(&self, sector: i32) -> Option<TrackInfo>;
-        /// Retrieves the sector information for a given track.
-        ///
-        /// # Arguments
-        ///
-        /// * `track` - A `TrackInfo` object representing the track for which sector information
-        ///   is requested.
-        ///
-        /// # Returns
-        ///
-        /// Returns an `Option<i32>`:
-        /// * `Some(i32)` - The sector information corresponding to the provided track.
-        /// * `None` - If no sector information is available or the track does not map to a sector.
-        ///
-        /// # Example
-        ///
-        /// ```rust
-        /// let track_info = TrackInfo { /* fields */ };
-        /// let sector = object.get_sector_for_track_info(track_info);
-        ///
-        /// match sector {
-        ///     Some(s) => println!("Sector: {}", s),
-        ///     None => println!("No sector found for the given track."),
-        /// }
-        /// ```
-        ///
-        /// # Notes
-        ///
-        /// Ensure that the `TrackInfo` object provided contains valid data to correctly retrieve the sector.
-        fn get_sector_for_track_info(&self, track: &TrackInfo) -> Option<i32>;
-        /// Recursively searches for and collects all the files within a specified directory.
-        ///
-        /// # Behavior
-        ///
-        /// - This function uses the current state to determine the root directory to search from.
-        /// - It gathers all files found, including those in subdirectories, and processes or stores
-        ///   them as per the implementation.
-        /// - The function ignores directories, symbolic links, or system-specific hidden files
-        ///   (if applicable).
-        ///
-        /// # Preconditions
-        ///
-        /// - The function assumes that the root directory is already set or initialized.
-        /// - The caller must have sufficient permissions to read from the directory and its subdirectories.
-        ///
-        /// # Side Effects
-        ///
-        /// - This function may modify internal state by populating a collection or structure with
-        ///   file paths.
-        ///
-        /// # Notes
-        ///
-        /// - Ensure that you handle potential errors such as inaccessible directories,
-        ///   or missing files within your implementation.
-        ///
-        /// # Examples
-        ///
-        /// ```rust
-        /// let mut file_handler = FileHandler::new("/path/to/directory");
-        /// file_handler.find_all_files();
-        /// ```
-        fn find_all_files(&mut self) -> Option<Vec<PRG>>;
-        /// Retrieves all files currently stored or managed in the application.
-        ///
-        /// This function fetches and returns a vector of `PRG` objects, which represent the files
-        /// in the system. If no files are available, it returns `None`.
-        ///
-        /// # Returns
-        /// - `Some(Vec<PRG>)`: A vector containing all `PRG` objects if files exist.
-        /// - `None`: If there are no files available.
-        ///
-        /// # Examples
-        /// ```rust
-        /// let mut app = Application::new();
-        /// if let Some(files) = app.get_all_files() {
-        ///     for file in files {
-        ///         println!("{:?}", file);
-        ///     }
-        /// } else {
-        ///     println!("No files found.");
-        /// }
-        /// ```
-        fn get_all_files(&mut self) -> Option<Vec<PRG>>;
-    }
+    pub(crate) use crate::disk::parser::{DiskParser, Sector, TrackInfo, HASHES, PRG};
 
     // derive traits
     #[derive(Debug, PartialEq, Eq, PackedSize, EncodeLE, DecodeLE)]
@@ -219,22 +12,6 @@ pub mod cbm {
         track: u8,
         sector: u8,
         data: [u8; 16],
-    }
-
-    #[derive(Clone)]
-    pub(crate) struct HASHES {
-        pub(crate) md5: String,
-        pub(crate) sha1: String,
-        pub(crate) sha256: String,
-    }
-    #[derive(Clone)]
-    pub(crate) struct PRG {
-        pub(crate) data: Vec<u8>,
-        pub(crate) name: String,
-        pub(crate) directory: bool,
-        pub(crate) track: u8,
-        pub(crate) sector: u8,
-        pub(crate) hashes: HASHES,
     }
 
     pub(crate) struct FileEntry {
@@ -246,39 +23,6 @@ pub mod cbm {
     const HEX_CHAR_LOOKUP: [char; 16] = [
         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
     ];
-
-    /// Represents information about a track in a storage system or disk.
-    ///
-    /// The `TrackInfo` struct stores details about a specific track and sector,
-    /// which can be used for various disk/location indexing purposes.
-    ///
-    /// # Fields
-    ///
-    /// * `track` - The number representing the track.
-    /// * `sector` - The number representing the sector within the track.
-    ///
-    /// # Visibility
-    ///
-    /// This struct is visible only within the current crate due to the `pub(crate)` visibility modifier.
-    pub(crate) struct TrackInfo {
-        track: u8,
-        sector: u8,
-    }
-
-    /// Represents a sector on a track in a storage device or disk.
-    ///
-    /// A `Sector` is defined by its track number, sector number, and the data it contains.
-    /// This structure can be used to model low-level disk structures or data storage mechanisms.
-    ///
-    /// # Fields
-    ///
-    /// - `track` (`u8`): The
-    #[derive(Clone)]
-    pub(crate) struct Sector {
-        track: u8,
-        sector: u8,
-        data: Vec<u8>,
-    }
 
     /// `D64` is a structure representing the state and components of a D64 disk image.
     /// It is intended for internal crate usage (`pub(crate)`).
@@ -410,6 +154,450 @@ pub mod cbm {
     /// - `SECTOR_SIZE`: The total size of a sector in bytes.
     /// - `HEADER
     const MAX_DATA_SIZE: usize = SECTOR_SIZE - HEADER_SIZE;
+
+    impl DiskParser for D64 {
+        /// Sets the debug output mode for the current instance.
+        ///
+        /// # Parameters
+        /// - `debug_output`: A boolean value indicating whether debug output should be enabled (`true`)
+        ///                   or disabled (`false`).
+        ///
+        /// # Example
+        /// ```
+        /// let mut instance = SomeStruct::new();
+        /// instance.set_debug_output(true); // Enables debug output
+        /// instance.set_debug_output(false); // Disables debug output
+        /// ```
+        ///
+        /// # Notes
+        /// This method modifies the `debug_output` field within the instance,
+        /// which controls whether debug-related information is printed or logged.
+        fn set_debug_output(&mut self, debug_output: bool) -> &mut Self {
+            self.debug_output = debug_output;
+            self
+        }
+        /// Parses a file from the given path and processes its content.
+        ///
+        /// # Parameters
+        /// - `path`: A string slice that holds the file path to be parsed.
+        ///
+        /// # Returns
+        /// - Returns `true` if the file parsing logic is successfully executed based on the inner implementation,
+        ///   otherwise returns `false`.
+        ///
+        /// # Behavior
+        /// - Attempts to load the file specified by the input path via the `load_file` method.
+        /// - If the file is successfully loaded (indicated by an `Ok` result), invokes the `parse` method to process the data.
+        /// - Currently, always returns `false` regardless of the result.
+        ///
+        /// # Notes
+        /// - Ensure that the `load_file` and `parse` methods are properly implemented and integrated with this function for expected behavior.
+        /// - The return value is not dependent on the success of the `parse` or `load_file` operation as it currently always returns `false`.
+        ///
+        /// # Example
+        /// ```
+        /// let mut parser = MyParser::new();
+        /// let result = parser.parse_file("example.txt");
+        /// assert_eq!(result, false); // Due to hardcoded false return
+        /// ```
+        fn parse_file(&mut self, path: &str) -> Result<bool, String> {
+            if let Ok(()) = load_file(self, path) {
+                return parse_disk(self);
+            }
+            Err("failed to load file".to_string())
+        }
+
+        /// Parses data from a given byte buffer and updates the internal state.
+        ///
+        /// This function takes a slice of bytes, copies the contents
+        /// into the internal `data` variable, and then calls the `parse_disk`
+        /// method to handle further parsing or processing.
+        ///
+        /// # Arguments
+        ///
+        /// * `buffer` - A slice of bytes (`&[u8]`) that contains the data to be parsed.
+        ///
+        /// # Returns
+        ///
+        /// * `bool` - The function is expected to return a boolean value indicating
+        ///            the success or failure of the operation. However, the current
+        ///            implementation does not explicitly return a value, which may
+        ///            cause a compilation error.
+        ///
+        /// # Note
+        ///
+        /// Ensure that the function has the correct return value (`true` or `false`)
+        /// to match the expected return type (`bool`). The current implementation
+        /// is missing an explicit return statement.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// let mut obj = YourStruct::new();
+        /// let buffer = vec![1, 2, 3, 4];
+        /// let success = obj.parse_from_buffer(&buffer);
+        /// ```
+        fn parse_from_buffer(&mut self, buffer: &[u8]) -> Result<bool, String> {
+            self.data = buffer.to_vec();
+            parse_disk(self)
+        }
+
+        /// Returns the number of sectors.
+        ///
+        /// This method calculates and returns the total count of sectors currently present
+        /// within the `self.sectors` collection.
+        ///
+        /// # Returns
+        /// * `usize` - The number of sectors in the `self.sectors` collection.
+        ///
+        /// # Examples
+        /// ```
+        /// let instance = MyStruct { sectors: vec![Sector::new(), Sector::new()] };
+        /// let count = instance.get_sector_count();
+        /// assert_eq!(count, 2);
+        /// ```
+        fn get_sector_count(&self) -> usize {
+            self.sectors.len()
+        }
+
+        ///
+        /// Retrieves a specified sector from the internal sector storage.
+        ///
+        /// # Parameters
+        /// - `sector`: An integer representing the sector index to retrieve.
+        ///
+        /// # Returns
+        /// - `Some(Sector)`: If the `sector` index is valid and within bounds.
+        /// - `None`: If the `sector` index exceeds the defined `MAX_VALID_SECTOR`.
+        ///
+        /// # Behavior
+        /// - The function checks if the provided `sector` index is greater than
+        ///   `MAX_VALID_SECTOR`. If so, it immediately returns `None`.
+        /// - If the `sector` index is valid, it clones the specified sector
+        ///   from the internal storage and returns it wrapped in `Some`.
+        ///
+        /// # Panics
+        /// - May panic if `sector` is negative or if the `sector` index
+        ///   causes an out-of-bounds access on the `self.sectors` array.
+        ///
+        /// # Example
+        /// ```
+        /// let sector = object.get_sector(5);
+        /// if let Some(s) = sector {
+        ///     println!("Retrieved sector: {:?}", s);
+        /// } else {
+        ///     println!("Sector is invalid or out of bounds.");
+        /// }
+        /// ```
+        fn get_sector(&self, sector: i32) -> Option<Sector> {
+            if sector > get_max_valid_sector(self) {
+                return None;
+            }
+
+            let copy = self.sectors[sector as usize].clone();
+            Some(copy)
+        }
+
+        /// Creates a new instance of the struct initialized with default values.
+        ///
+        /// The `new` function initializes the following fields:
+        ///
+        /// - `sector_map`: A predefined vector representing the sizes of sectors in the system.
+        /// - `type_info`: A vector of `TypeInfo` objects that provide metadata about disk variants,
+        ///   including disk size, error size, and whether error information is present. There are three variants:
+        ///     - Variant 1
+        ///     - Variant 2
+        ///     - Variant 3
+        /// - `cumulated_sectors`: A vector that holds cumulative sums of sector sizes from `sector_map`.
+        ///   This is calculated using an iterator with the `.scan()` function to maintain a running total.
+        ///
+        /// The returned struct has the following default field values:
+        /// - `data`: An empty vector, intended to store specific disk data.
+        /// - `disk_size`: Initialized to `DISK_SIZE_VARIANT_1`, which corresponds to the first disk type.
+        /// - `sectors`: An empty vector, reserved for sector-specific data when needed.
+        /// - `cumulated_sectors`: Pre-computed cumulative sector sizes from `sector_map`.
+        /// - `debug_output`: A boolean flag initialized to `false`, used to toggle debugging information.
+        /// - `type_info`: The predefined vector describing disk variants and relevant metadata.
+        /// - `identified_type_info`: Set to the default `TypeInfo` of `Variant 1`, which corresponds to:
+        ///   - Disk size: `DISK_SIZE_VARIANT_1`
+        ///   - Error size: `ERROR_SIZE_VARIANT_1`
+        ///   - Error information presence: `false`
+        ///
+        /// # Returns
+        /// A new instance of the struct with all fields initialized using the predefined or calculated values.
+        fn new() -> Self {
+            let sector_map = vec![
+                21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 19, 19, 19, 19,
+                19, 19, 19, 18, 18, 18, 18, 18, 18, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
+            ];
+
+            // Calculate cumulated_sectors before creating the struct
+            let cumulated_sectors = sector_map
+                .iter()
+                .scan(0, |acc, &x| {
+                    *acc += x;
+                    Some(*acc)
+                })
+                .collect();
+
+            Self {
+                data: Vec::new(),
+                disk_size: DISK_SIZE_VARIANT_1,
+                sectors: Vec::new(),
+                cumulated_sectors,
+                debug_output: false,
+                type_info: create_type_info(),
+                identified_type_info: default_type_info(),
+            }
+        }
+
+        /// Retrieves track information for a given raw sector.
+        ///
+        /// This function calculates the track and sector information based on a
+        /// provided raw sector value. If the sector value exceeds the maximum valid
+        /// sector (`MAX_VALID_SECTOR`), it returns `None`.
+        ///
+        /// The calculation is performed using cumulative sector boundaries stored in
+        /// the `self.cumulated_sectors` array. It determines the corresponding track
+        /// number and adjusts the sector value relative to the track's start.
+        ///
+        /// # Parameters
+        /// - `sector`: The raw sector value as an integer.
+        ///
+        /// # Returns
+        /// - `Option<TrackInfo>`:
+        ///   - `Some(TrackInfo)`: Contains the resolved track number and relative
+        ///     sector within that track.
+        ///   - `None`: When the `sector` value is greater than `MAX_VALID_SECTOR`.
+        ///
+        /// # Example
+        /// ```rust
+        /// // Assuming a sector within bounds and properly initialized `self` object:
+        /// let sector = 1200;
+        /// let track_info = self.get_track_info_for_raw_sector(sector);
+        ///
+        /// match track_info {
+        ///     Some(info) => println!("Track: {}, Sector: {}", info.track, info.sector),
+        ///     None => println!("Invalid sector."),
+        /// }
+        /// ```
+        ///
+        /// # Notes
+        /// - Track numbers begin at 1.
+        /// - If the sector value falls in the first track (or no boundary is exceeded),
+        ///   the calculation adjusts the `sector` directly.
+        ///
+        /// # Errors
+        /// - Returns `None` directly if the `sector` exceeds `MAX_VALID_SECTOR`.
+        ///
+        /// # Dependencies
+        /// - `TrackInfo`: A data structure that must exist and be accessible in the
+        ///   same context to store the track number and relative sector.
+        ///
+        /// # Constraints
+        /// - The `self.cumulated_sectors` array must be initialized and properly
+        ///   populated with cumulative sector counts for this function to work
+        ///   correctly.
+        fn get_track_info_for_raw_sector(&self, sector: i32) -> Option<TrackInfo> {
+            if sector > get_max_valid_sector(self) {
+                return None;
+            }
+
+            let track_number = self
+                .cumulated_sectors
+                .iter()
+                .enumerate()
+                .find(|&(_, &max_sector)| sector + 1 <= max_sector)
+                .map(|(track_num, _)| (track_num + 1) as i32)
+                .unwrap();
+
+            if track_number >= 2 {
+                Some(TrackInfo {
+                    track: track_number as u8,
+                    sector: (sector - self.cumulated_sectors[(track_number - 2) as usize]) as u8,
+                })
+            } else {
+                Some(TrackInfo {
+                    track: track_number as u8,
+                    sector: sector as u8,
+                })
+            }
+        }
+
+        /// Retrieves the sector number for a given `TrackInfo`.
+        ///
+        /// This method calculates the sector number for the provided `TrackInfo` based on the track
+        /// and sector values. It uses precomputed cumulative sectors to derive the correct sector
+        /// number for tracks greater than 1. If the calculated sector exceeds the `MAX_VALID_SECTOR`
+        /// limit, the function returns `None`.
+        ///
+        /// # Parameters
+        /// - `track`: A `TrackInfo` struct that contains the track and sector information.
+        ///
+        /// # Returns
+        /// - `Some(i32)` containing the calculated sector number if it is valid.
+        /// - `None` if the calculated sector exceeds the maximum valid sector value (`MAX_VALID_SECTOR`).
+        ///
+        /// # Notes
+        /// - For `track.track <= 1`, the function directly returns the `track.sector` without
+        ///   any computation.
+        /// - For `track.track > 1`, the raw sector is computed using the cumulative sectors and
+        ///   the provided `track.sector` value.
+        ///
+        /// # Example
+        /// ```
+        /// let track_info = TrackInfo { track: 3, sector: 5 };
+        /// let sector = your_struct.get_sector_for_track_info(track_info);
+        /// assert_eq!(sector, Some(15)); // Example value if within valid range
+        ///
+        /// let invalid_track_info = TrackInfo { track: 10, sector: 9999 };
+        /// let invalid_sector = your_struct.get_sector_for_track_info(invalid_track_info);
+        /// assert_eq!(invalid_sector, None); // Exceeds MAX_VALID_SECTOR.
+        /// ```
+        fn get_sector_for_track_info(&self, track: &TrackInfo) -> Option<i32> {
+            if track.track <= 1 {
+                return Some(track.sector as i32);
+            }
+
+            let raw_sector =
+                self.cumulated_sectors[(track.track - 2) as usize] + (track.sector as i32);
+
+            if raw_sector > get_max_valid_sector(self) {
+                return None;
+            }
+
+            Some(raw_sector)
+        }
+
+        ///
+        /// This method scans and retrieves all files stored in the system by analyzing sectors.
+        /// It identifies valid file entries, tracks their parent sectors, assembles the files,
+        /// and returns them in a vector.
+        ///
+        /// # Returns
+        /// - `Option<Vec<PRG>>`: Returns `Some(Vec<PRG>)` containing all identified files if any files are found,
+        ///   otherwise returns `None`.
+        ///
+        /// # Procedure
+        /// - Iterates through all sectors in the system using their indices.
+        /// - Skips sectors that are not file entries (e.g., those not located on track 0 or within sector 0).
+        /// - Traces parent sectors for each file to collect all related sectors, forming a complete file structure.
+        /// - Builds a `PRG` file object by assembling data from the identified sectors while maintaining the order.
+        /// - Each file entry is processed and added to the `files` vector.
+        ///
+        /// # Side Effects
+        /// - Outputs debug information, including track and sector details for EOF detection,
+        ///   and the sectors used for each file, to the console using `println!`.
+        /// - Prints the total number of files found.
+        ///
+        /// # Example
+        /// ```rust
+        /// if let Some(files) = system.find_all_files() {
+        ///     for file in files {
+        ///         println!("File name: {}, File size: {}", file.name, file.data.len());
+        ///     }
+        /// } else {
+        ///     println!("No files found");
+        /// }
+        /// ```
+        ///
+        /// # Notes
+        /// - The method depends on several helper methods like `get_sector`, `get_sector_count`,
+        ///   `get_track_info_for_raw_sector`, and `find_parent_sector`.
+        /// - The `process_file_sectors` method is used to finalize the processed file.
+        ///
+        /// # Assumptions
+        /// - Sectors are structured in a way that allows reconstructing the files based on parent sector relationships.
+        /// - Failures to retrieve a sector's information (e.g., `None` return from `get_sector`) are silently skipped.
+        ///
+        /// # Limitations
+        /// - The method assumes all files are located on track 0 and excludes specific sectors (sector 0).
+        /// - The file type and name default to "unknown" before processing.
+        ///
+        /// # Dependencies
+        /// - `PRG`: Struct representing a file, containing:
+        ///     - `data: Vec<u8>`: File data extracted from relevant sectors.
+        ///     - `name: String`: File name (initially set to "unknown").
+        ///
+        fn find_all_files(&mut self) -> Option<Vec<PRG>> {
+            let mut files: Vec<PRG> = Vec::new();
+
+            for sector_index in 0..self.get_sector_count() as i32 {
+                let Some(sector_info) = self.get_sector(sector_index) else {
+                    continue;
+                };
+
+                // Skip if not a file entry (files are on track 0, excluding sector 0)
+                if sector_info.track != 0 || sector_info.sector == 0 {
+                    continue;
+                }
+
+                if let Some(file) = process_single_file(self, sector_index) {
+                    files.push(file);
+                }
+            }
+
+            if self.debug_output {
+                println!("Total files found: {}", files.len());
+            }
+
+            if files.is_empty() { None } else { Some(files) }
+        }
+
+        /// Retrieves all files in the current context, associating them with corresponding directory entries.
+        ///
+        /// This method performs the following steps:
+        /// 1. Finds all files by calling `find_all_files`.
+        /// 2. Parses the directory data via `parse_directory`.
+        /// 3. Iterates through the files and directory entries. If a match is found
+        ///    between a file's `track` and `sector` and a directory entry's `track` and `sector`,
+        ///    it assigns the corresponding directory entry's `name` to the file.
+        ///
+        /// # Returns
+        /// - `Some(Vec<PRG>)`: A vector of `PRG` objects with names assigned from the directory if
+        ///   the files and directory are successfully found and matched.
+        /// - `None`: If either files or directory data is missing or cannot be processed.
+        ///
+        /// # Note
+        /// - The method assumes that `self.find_all_files()` and `self.parse_directory()` return
+        ///   usable data for processing.
+        /// - Modifies the names of the files in-place based on the matching directory entries.
+        ///
+        /// # Example Usage
+        /// ```rust
+        /// let files = instance.get_all_files();
+        /// if let Some(files) = files {
+        ///     for file in files {
+        ///         println!("File name: {}", file.name);
+        ///     }
+        /// } else {
+        ///     println!("No files found or directory parsing failed.");
+        /// }
+        /// ```
+        fn get_all_files(&mut self) -> Option<Vec<PRG>> {
+            if let Some(mut files) = self.find_all_files() {
+                if let Some(directory) = parse_directory(self) {
+                    for file in files.iter_mut() {
+                        for entry in &directory {
+                            if entry.track == file.track && entry.sector == file.sector {
+                                file.name = entry.name.clone();
+                                break;
+                            }
+                        }
+                        file.hashes.md5 = vec_u8to_hex_string(&Sha1::digest(file.data.clone()));
+                        file.hashes.sha1 =
+                            vec_u8to_hex_string(&md5::compute(file.data.clone()).to_vec());
+                        file.hashes.sha256 =
+                            sha256::digest(file.data.clone()).to_uppercase().to_string();
+                    }
+
+                    return Some(files);
+                }
+            }
+
+            None
+        }
+    }
 
     /// Identifies the type of disk based on the associated `type_info` of the `D64` structure.
     ///
@@ -1245,447 +1433,4 @@ pub mod cbm {
         None
     }
 
-    impl DiskParser for D64 {
-        /// Sets the debug output mode for the current instance.
-        ///
-        /// # Parameters
-        /// - `debug_output`: A boolean value indicating whether debug output should be enabled (`true`)
-        ///                   or disabled (`false`).
-        ///
-        /// # Example
-        /// ```
-        /// let mut instance = SomeStruct::new();
-        /// instance.set_debug_output(true); // Enables debug output
-        /// instance.set_debug_output(false); // Disables debug output
-        /// ```
-        ///
-        /// # Notes
-        /// This method modifies the `debug_output` field within the instance,
-        /// which controls whether debug-related information is printed or logged.
-        fn set_debug_output(&mut self, debug_output: bool) -> &mut Self {
-            self.debug_output = debug_output;
-            self
-        }
-        /// Parses a file from the given path and processes its content.
-        ///
-        /// # Parameters
-        /// - `path`: A string slice that holds the file path to be parsed.
-        ///
-        /// # Returns
-        /// - Returns `true` if the file parsing logic is successfully executed based on the inner implementation,
-        ///   otherwise returns `false`.
-        ///
-        /// # Behavior
-        /// - Attempts to load the file specified by the input path via the `load_file` method.
-        /// - If the file is successfully loaded (indicated by an `Ok` result), invokes the `parse` method to process the data.
-        /// - Currently, always returns `false` regardless of the result.
-        ///
-        /// # Notes
-        /// - Ensure that the `load_file` and `parse` methods are properly implemented and integrated with this function for expected behavior.
-        /// - The return value is not dependent on the success of the `parse` or `load_file` operation as it currently always returns `false`.
-        ///
-        /// # Example
-        /// ```
-        /// let mut parser = MyParser::new();
-        /// let result = parser.parse_file("example.txt");
-        /// assert_eq!(result, false); // Due to hardcoded false return
-        /// ```
-        fn parse_file(&mut self, path: &str) -> Result<bool, String> {
-            if let Ok(()) = load_file(self, path) {
-                return parse_disk(self);
-            }
-            Err("failed to load file".to_string())
-        }
-
-        /// Parses data from a given byte buffer and updates the internal state.
-        ///
-        /// This function takes a slice of bytes, copies the contents
-        /// into the internal `data` variable, and then calls the `parse_disk`
-        /// method to handle further parsing or processing.
-        ///
-        /// # Arguments
-        ///
-        /// * `buffer` - A slice of bytes (`&[u8]`) that contains the data to be parsed.
-        ///
-        /// # Returns
-        ///
-        /// * `bool` - The function is expected to return a boolean value indicating
-        ///            the success or failure of the operation. However, the current
-        ///            implementation does not explicitly return a value, which may
-        ///            cause a compilation error.
-        ///
-        /// # Note
-        ///
-        /// Ensure that the function has the correct return value (`true` or `false`)
-        /// to match the expected return type (`bool`). The current implementation
-        /// is missing an explicit return statement.
-        ///
-        /// # Example
-        ///
-        /// ```
-        /// let mut obj = YourStruct::new();
-        /// let buffer = vec![1, 2, 3, 4];
-        /// let success = obj.parse_from_buffer(&buffer);
-        /// ```
-        fn parse_from_buffer(&mut self, buffer: &[u8]) -> Result<bool, String> {
-            self.data = buffer.to_vec();
-            parse_disk(self)
-        }
-
-        /// Returns the number of sectors.
-        ///
-        /// This method calculates and returns the total count of sectors currently present
-        /// within the `self.sectors` collection.
-        ///
-        /// # Returns
-        /// * `usize` - The number of sectors in the `self.sectors` collection.
-        ///
-        /// # Examples
-        /// ```
-        /// let instance = MyStruct { sectors: vec![Sector::new(), Sector::new()] };
-        /// let count = instance.get_sector_count();
-        /// assert_eq!(count, 2);
-        /// ```
-        fn get_sector_count(&self) -> usize {
-            self.sectors.len()
-        }
-
-        ///
-        /// Retrieves a specified sector from the internal sector storage.
-        ///
-        /// # Parameters
-        /// - `sector`: An integer representing the sector index to retrieve.
-        ///
-        /// # Returns
-        /// - `Some(Sector)`: If the `sector` index is valid and within bounds.
-        /// - `None`: If the `sector` index exceeds the defined `MAX_VALID_SECTOR`.
-        ///
-        /// # Behavior
-        /// - The function checks if the provided `sector` index is greater than
-        ///   `MAX_VALID_SECTOR`. If so, it immediately returns `None`.
-        /// - If the `sector` index is valid, it clones the specified sector
-        ///   from the internal storage and returns it wrapped in `Some`.
-        ///
-        /// # Panics
-        /// - May panic if `sector` is negative or if the `sector` index
-        ///   causes an out-of-bounds access on the `self.sectors` array.
-        ///
-        /// # Example
-        /// ```
-        /// let sector = object.get_sector(5);
-        /// if let Some(s) = sector {
-        ///     println!("Retrieved sector: {:?}", s);
-        /// } else {
-        ///     println!("Sector is invalid or out of bounds.");
-        /// }
-        /// ```
-        fn get_sector(&self, sector: i32) -> Option<Sector> {
-            if sector > get_max_valid_sector(self) {
-                return None;
-            }
-
-            let copy = self.sectors[sector as usize].clone();
-            Some(copy)
-        }
-
-        /// Creates a new instance of the struct initialized with default values.
-        ///
-        /// The `new` function initializes the following fields:
-        ///
-        /// - `sector_map`: A predefined vector representing the sizes of sectors in the system.
-        /// - `type_info`: A vector of `TypeInfo` objects that provide metadata about disk variants,
-        ///   including disk size, error size, and whether error information is present. There are three variants:
-        ///     - Variant 1
-        ///     - Variant 2
-        ///     - Variant 3
-        /// - `cumulated_sectors`: A vector that holds cumulative sums of sector sizes from `sector_map`.
-        ///   This is calculated using an iterator with the `.scan()` function to maintain a running total.
-        ///
-        /// The returned struct has the following default field values:
-        /// - `data`: An empty vector, intended to store specific disk data.
-        /// - `disk_size`: Initialized to `DISK_SIZE_VARIANT_1`, which corresponds to the first disk type.
-        /// - `sectors`: An empty vector, reserved for sector-specific data when needed.
-        /// - `cumulated_sectors`: Pre-computed cumulative sector sizes from `sector_map`.
-        /// - `debug_output`: A boolean flag initialized to `false`, used to toggle debugging information.
-        /// - `type_info`: The predefined vector describing disk variants and relevant metadata.
-        /// - `identified_type_info`: Set to the default `TypeInfo` of `Variant 1`, which corresponds to:
-        ///   - Disk size: `DISK_SIZE_VARIANT_1`
-        ///   - Error size: `ERROR_SIZE_VARIANT_1`
-        ///   - Error information presence: `false`
-        ///
-        /// # Returns
-        /// A new instance of the struct with all fields initialized using the predefined or calculated values.
-        fn new() -> Self {
-            let sector_map = vec![
-                21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 19, 19, 19, 19,
-                19, 19, 19, 18, 18, 18, 18, 18, 18, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-            ];
-
-            // Calculate cumulated_sectors before creating the struct
-            let cumulated_sectors = sector_map
-                .iter()
-                .scan(0, |acc, &x| {
-                    *acc += x;
-                    Some(*acc)
-                })
-                .collect();
-
-            Self {
-                data: Vec::new(),
-                disk_size: DISK_SIZE_VARIANT_1,
-                sectors: Vec::new(),
-                cumulated_sectors,
-                debug_output: false,
-                type_info: create_type_info(),
-                identified_type_info: default_type_info(),
-            }
-        }
-
-        /// Retrieves track information for a given raw sector.
-        ///
-        /// This function calculates the track and sector information based on a
-        /// provided raw sector value. If the sector value exceeds the maximum valid
-        /// sector (`MAX_VALID_SECTOR`), it returns `None`.
-        ///
-        /// The calculation is performed using cumulative sector boundaries stored in
-        /// the `self.cumulated_sectors` array. It determines the corresponding track
-        /// number and adjusts the sector value relative to the track's start.
-        ///
-        /// # Parameters
-        /// - `sector`: The raw sector value as an integer.
-        ///
-        /// # Returns
-        /// - `Option<TrackInfo>`:
-        ///   - `Some(TrackInfo)`: Contains the resolved track number and relative
-        ///     sector within that track.
-        ///   - `None`: When the `sector` value is greater than `MAX_VALID_SECTOR`.
-        ///
-        /// # Example
-        /// ```rust
-        /// // Assuming a sector within bounds and properly initialized `self` object:
-        /// let sector = 1200;
-        /// let track_info = self.get_track_info_for_raw_sector(sector);
-        ///
-        /// match track_info {
-        ///     Some(info) => println!("Track: {}, Sector: {}", info.track, info.sector),
-        ///     None => println!("Invalid sector."),
-        /// }
-        /// ```
-        ///
-        /// # Notes
-        /// - Track numbers begin at 1.
-        /// - If the sector value falls in the first track (or no boundary is exceeded),
-        ///   the calculation adjusts the `sector` directly.
-        ///
-        /// # Errors
-        /// - Returns `None` directly if the `sector` exceeds `MAX_VALID_SECTOR`.
-        ///
-        /// # Dependencies
-        /// - `TrackInfo`: A data structure that must exist and be accessible in the
-        ///   same context to store the track number and relative sector.
-        ///
-        /// # Constraints
-        /// - The `self.cumulated_sectors` array must be initialized and properly
-        ///   populated with cumulative sector counts for this function to work
-        ///   correctly.
-        fn get_track_info_for_raw_sector(&self, sector: i32) -> Option<TrackInfo> {
-            if sector > get_max_valid_sector(self) {
-                return None;
-            }
-
-            let track_number = self
-                .cumulated_sectors
-                .iter()
-                .enumerate()
-                .find(|&(_, &max_sector)| sector + 1 <= max_sector)
-                .map(|(track_num, _)| (track_num + 1) as i32)
-                .unwrap();
-
-            if track_number >= 2 {
-                Some(TrackInfo {
-                    track: track_number as u8,
-                    sector: (sector - self.cumulated_sectors[(track_number - 2) as usize]) as u8,
-                })
-            } else {
-                Some(TrackInfo {
-                    track: track_number as u8,
-                    sector: sector as u8,
-                })
-            }
-        }
-
-        /// Retrieves the sector number for a given `TrackInfo`.
-        ///
-        /// This method calculates the sector number for the provided `TrackInfo` based on the track
-        /// and sector values. It uses precomputed cumulative sectors to derive the correct sector
-        /// number for tracks greater than 1. If the calculated sector exceeds the `MAX_VALID_SECTOR`
-        /// limit, the function returns `None`.
-        ///
-        /// # Parameters
-        /// - `track`: A `TrackInfo` struct that contains the track and sector information.
-        ///
-        /// # Returns
-        /// - `Some(i32)` containing the calculated sector number if it is valid.
-        /// - `None` if the calculated sector exceeds the maximum valid sector value (`MAX_VALID_SECTOR`).
-        ///
-        /// # Notes
-        /// - For `track.track <= 1`, the function directly returns the `track.sector` without
-        ///   any computation.
-        /// - For `track.track > 1`, the raw sector is computed using the cumulative sectors and
-        ///   the provided `track.sector` value.
-        ///
-        /// # Example
-        /// ```
-        /// let track_info = TrackInfo { track: 3, sector: 5 };
-        /// let sector = your_struct.get_sector_for_track_info(track_info);
-        /// assert_eq!(sector, Some(15)); // Example value if within valid range
-        ///
-        /// let invalid_track_info = TrackInfo { track: 10, sector: 9999 };
-        /// let invalid_sector = your_struct.get_sector_for_track_info(invalid_track_info);
-        /// assert_eq!(invalid_sector, None); // Exceeds MAX_VALID_SECTOR.
-        /// ```
-        fn get_sector_for_track_info(&self, track: &TrackInfo) -> Option<i32> {
-            if track.track <= 1 {
-                return Some(track.sector as i32);
-            }
-
-            let raw_sector =
-                self.cumulated_sectors[(track.track - 2) as usize] + (track.sector as i32);
-
-            if raw_sector > get_max_valid_sector(self) {
-                return None;
-            }
-
-            Some(raw_sector)
-        }
-
-        ///
-        /// This method scans and retrieves all files stored in the system by analyzing sectors.
-        /// It identifies valid file entries, tracks their parent sectors, assembles the files,
-        /// and returns them in a vector.
-        ///
-        /// # Returns
-        /// - `Option<Vec<PRG>>`: Returns `Some(Vec<PRG>)` containing all identified files if any files are found,
-        ///   otherwise returns `None`.
-        ///
-        /// # Procedure
-        /// - Iterates through all sectors in the system using their indices.
-        /// - Skips sectors that are not file entries (e.g., those not located on track 0 or within sector 0).
-        /// - Traces parent sectors for each file to collect all related sectors, forming a complete file structure.
-        /// - Builds a `PRG` file object by assembling data from the identified sectors while maintaining the order.
-        /// - Each file entry is processed and added to the `files` vector.
-        ///
-        /// # Side Effects
-        /// - Outputs debug information, including track and sector details for EOF detection,
-        ///   and the sectors used for each file, to the console using `println!`.
-        /// - Prints the total number of files found.
-        ///
-        /// # Example
-        /// ```rust
-        /// if let Some(files) = system.find_all_files() {
-        ///     for file in files {
-        ///         println!("File name: {}, File size: {}", file.name, file.data.len());
-        ///     }
-        /// } else {
-        ///     println!("No files found");
-        /// }
-        /// ```
-        ///
-        /// # Notes
-        /// - The method depends on several helper methods like `get_sector`, `get_sector_count`,
-        ///   `get_track_info_for_raw_sector`, and `find_parent_sector`.
-        /// - The `process_file_sectors` method is used to finalize the processed file.
-        ///
-        /// # Assumptions
-        /// - Sectors are structured in a way that allows reconstructing the files based on parent sector relationships.
-        /// - Failures to retrieve a sector's information (e.g., `None` return from `get_sector`) are silently skipped.
-        ///
-        /// # Limitations
-        /// - The method assumes all files are located on track 0 and excludes specific sectors (sector 0).
-        /// - The file type and name default to "unknown" before processing.
-        ///
-        /// # Dependencies
-        /// - `PRG`: Struct representing a file, containing:
-        ///     - `data: Vec<u8>`: File data extracted from relevant sectors.
-        ///     - `name: String`: File name (initially set to "unknown").
-        ///
-        fn find_all_files(&mut self) -> Option<Vec<PRG>> {
-            let mut files: Vec<PRG> = Vec::new();
-
-            for sector_index in 0..self.get_sector_count() as i32 {
-                let Some(sector_info) = self.get_sector(sector_index) else {
-                    continue;
-                };
-
-                // Skip if not a file entry (files are on track 0, excluding sector 0)
-                if sector_info.track != 0 || sector_info.sector == 0 {
-                    continue;
-                }
-
-                if let Some(file) = process_single_file(self, sector_index) {
-                    files.push(file);
-                }
-            }
-
-            if self.debug_output {
-                println!("Total files found: {}", files.len());
-            }
-
-            if files.is_empty() { None } else { Some(files) }
-        }
-
-        /// Retrieves all files in the current context, associating them with corresponding directory entries.
-        ///
-        /// This method performs the following steps:
-        /// 1. Finds all files by calling `find_all_files`.
-        /// 2. Parses the directory data via `parse_directory`.
-        /// 3. Iterates through the files and directory entries. If a match is found
-        ///    between a file's `track` and `sector` and a directory entry's `track` and `sector`,
-        ///    it assigns the corresponding directory entry's `name` to the file.
-        ///
-        /// # Returns
-        /// - `Some(Vec<PRG>)`: A vector of `PRG` objects with names assigned from the directory if
-        ///   the files and directory are successfully found and matched.
-        /// - `None`: If either files or directory data is missing or cannot be processed.
-        ///
-        /// # Note
-        /// - The method assumes that `self.find_all_files()` and `self.parse_directory()` return
-        ///   usable data for processing.
-        /// - Modifies the names of the files in-place based on the matching directory entries.
-        ///
-        /// # Example Usage
-        /// ```rust
-        /// let files = instance.get_all_files();
-        /// if let Some(files) = files {
-        ///     for file in files {
-        ///         println!("File name: {}", file.name);
-        ///     }
-        /// } else {
-        ///     println!("No files found or directory parsing failed.");
-        /// }
-        /// ```
-        fn get_all_files(&mut self) -> Option<Vec<PRG>> {
-            if let Some(mut files) = self.find_all_files() {
-                if let Some(directory) = parse_directory(self) {
-                    for file in files.iter_mut() {
-                        for entry in &directory {
-                            if entry.track == file.track && entry.sector == file.sector {
-                                file.name = entry.name.clone();
-                                break;
-                            }
-                        }
-                        file.hashes.md5 = vec_u8to_hex_string(&Sha1::digest(file.data.clone()));
-                        file.hashes.sha1 =
-                            vec_u8to_hex_string(&md5::compute(file.data.clone()).to_vec());
-                        file.hashes.sha256 =
-                            sha256::digest(file.data.clone()).to_uppercase().to_string();
-                    }
-
-                    return Some(files);
-                }
-            }
-
-            None
-        }
-    }
 }
