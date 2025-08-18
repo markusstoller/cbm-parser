@@ -94,21 +94,25 @@ fn process_d64_image(
             if file.directory {
                 continue;
             }
+            /*
+            {
+                println!(
+                    "filename: {:16} track: #{:2.2}:{:2.2} length: {:10} sha256: {}",
+                    file.name,
+                    file.track,
+                    file.sector,
+                    file.data.len(),
+                    file.hashes.sha256
+                );
+            }
+
+             */
             helper.lock().unwrap().add_item(Element {
                 prg: file,
                 parent: parent_file.to_string(),
             });
-            /*
-            println!(
-                "filename: {:16} track: #{:2.2}:{:2.2} length: {:10} sha256: {}",
-                file.name,
-                file.track,
-                file.sector,
-                file.data.len(),
-                file.hashes.sha256
-            );
 
-             */
+
         }
         Ok(true)
     } else {
