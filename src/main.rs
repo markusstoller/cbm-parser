@@ -73,8 +73,47 @@ fn get_extension_from_filename(filename: &str) -> Option<&str> {
 
 
 
-/// Asynchronous function that consumes file entries, processes them using appropriate parsers,
-/// and updates counters for successfully parsed files.
+/// Asynchronous consumer task that processes directory entries received through a channel.
+///
+/// This function continuously listens for `DirEntry` objects sent to the provided `Receiver`,
+/// and processes them if they are determined to be files. File paths along with their extensions
+/// are extracted and passed to the context for processing.
+///
+/// # Arguments
+///
+/// * `rx` - An asynchronous `Receiver` that sends `DirEntry` items, representing directory entries.
+/// * `files_parsed` - A shared atomic counter tracking the number of successfully parsed files.
+/// * `files_attempted` - A shared atomic counter tracking the number of attempted file parsing operations.
+/// * `sqlite` - A thread-safe, shared `SqliteHandler` wrapped in a `Mutex` for database interaction.
+///
+/// # Behavior
+///
+/// * Checks if the received `DirEntry` represents a file. If it is not a file, it skips further processing.
+/// * Extracts the file path string and file extension from the directory entry if available.
+/// * Passes the file path and extension to `process_file` using the provided file-processing context.
+///
+/// # Note
+///
+/// * This function runs in an infinite loop, continuously consuming directory entries from the receiver
+///   until the channel is closed.
+/// * The function is intended to be part of a multi-threaded or asynchronous file-processing pipeline.
+/// * Proper error handling is required for related components (e.g., `process_file`) to ensure robustness.
+///
+/// # Example Usage
+///
+/// ```rust
+/// use tokio::sync::{mpsc, Mutex};
+/// use std::sync::{Arc, atomic::{AtomicI32, Ordering}};
+///
+/// let (tx, rx) = mpsc::channel(100);
+/// let files_parsed = Arc::new(AtomicI32::new(0));
+/// let files_attempted = Arc::new(AtomicI32::new(0));
+/// let sqlite_handler = Arc::new(Mutex::new(SqliteHandler::new()));
+///
+/// tokio::spawn(consumer(rx, files_parsed.clone(), files_attempted.clone(), sqlite_handler.clone()));
+///
+/// // Send directory entries to the channel using `tx`...
+/// ```
 async fn consumer(
     rx: Receiver<DirEntry>,
     files_parsed: Arc<AtomicI32>,
@@ -160,8 +199,6 @@ async fn cleanup_workers_and_db(
         }
     }
 
-    progress.signal_completion();
-
     // Ensure proper shutdown of the database connection
     sqlite
         .lock()
@@ -169,7 +206,7 @@ async fn cleanup_workers_and_db(
         .close()
         .expect("Failed to close database");
 
-    progress.print_final_count();
+    progress.terminate_and_report();
 }
 
 /// Asynchronously processes a directory by walking through its files, filtering them based on supported parsers,
@@ -250,7 +287,7 @@ async fn process_directory(
 ///
 /// This function logs errors related to failed channel sends and worker thread execution.
 async fn producer(args: &Args) {
-    let progress = ProgressState::new();
+    let mut progress = ProgressState::new();
     let sqlite = Arc::new(Mutex::new(SqliteHandler::new(&args.dbfile)));
     let (tx, rx) = unbounded();
     let mut children = Vec::new();
@@ -266,10 +303,19 @@ async fn producer(args: &Args) {
         )));
     }
 
+    // Create parsers, indexed by file extension
     let supported_parsers = create_parsers();
+
+    // Spawn progress reporter
     progress.spawn_reporter();
+
+    // Process files in the directory
     process_directory(&args.path, &progress, &tx, supported_parsers).await;
+
+    // close the channel, indicating that no more files will be sent
     tx.close();
+
+    // Wait for all workers to complete and ensure proper shutdown of the database
     cleanup_workers_and_db(children, &progress, sqlite).await;
 }
 
