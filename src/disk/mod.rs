@@ -1,6 +1,7 @@
 pub mod cbm {
     use endian_codec::{DecodeLE, EncodeLE, PackedSize};
     use sha1::{Digest, Sha1};
+    use std::collections::BTreeMap;
 
     /// The `DiskParser` trait defines an interface for parsing and manipulating `.D64` disk image files.
     /// Implementing this trait provides methods for parsing sectors, loading files, and interacting
@@ -631,6 +632,8 @@ pub mod cbm {
         sectors: Vec<Sector>,
         cumulated_sectors: Vec<i32>,
         debug_output: bool,
+        type_info: Vec<TypeInfo>,
+        identified_type_info: TypeInfo,
     }
 
     const DIRECTORY_ENTRY_SIZE: usize = 32;
@@ -683,23 +686,20 @@ pub mod cbm {
     /// # Note
     /// The value of `DISK_SIZE` is specific to the context of this program and should
     /// not be assumed to apply universally to all disk sizes.
-    const DISK_SIZE: usize = 174848;
+    const DISK_SIZE_VARIANT_1: usize = 174848;
+    const ERROR_SIZE_VARIANT_1: usize = 683;
+    const DISK_SIZE_VARIANT_2: usize = 196608;
+    const ERROR_SIZE_VARIANT_2: usize = 768;
+    const DISK_SIZE_VARIANT_3: usize = 205312;
+    const ERROR_SIZE_VARIANT_3: usize = 802;
 
-    /// Represents the maximum valid sector number for a given application.
-    ///
-    /// This constant defines the upper boundary for the sector range.
-    /// Any sector value above this will be considered invalid or out of range.
-    ///
-    /// # Value
-    /// - `683` is the maximum valid sector number.
-    ///
-    /// # Usage
-    /// Use this constant to validate sector inputs or enforce sector range constraints.
-    ///
-    /// # Example
-    /// ```
-    ///
-    const MAX_VALID_SECTOR: i32 = 683;
+    #[derive(Clone)]
+    struct TypeInfo {
+        disk_size: usize,
+        error_size: usize,
+        error_information_present: bool,
+    }
+
     /// The constant `SECTOR_SIZE` represents the size of a single sector in bytes.
     ///
     /// This value is typically used in contexts where data storage or memory is
@@ -731,6 +731,155 @@ pub mod cbm {
     /// - `SECTOR_SIZE`: The total size of a sector in bytes.
     /// - `HEADER
     const MAX_DATA_SIZE: usize = SECTOR_SIZE - HEADER_SIZE;
+
+    /// Identifies the type of disk based on the associated `type_info` of the `D64` structure.
+    ///
+    /// This function iterates over the cloned `type_info` of the `D64` instance and checks for
+    /// a matching disk type using the `check_disk_match` function. If a match is found, the
+    /// function immediately returns the result (a `bool`) from `check_disk_match`. If no match is
+    /// found during iteration, the function returns `false`.
+    ///
+    /// # Parameters
+    /// - `self_ref: &mut D64`: A mutable reference to the `D64` instance whose `type_info` will be
+    ///   used to identify the disk type. The mutation allows the possibility of modifying `self_ref`
+    ///   as part of type matching, depending on the implementation of `check_disk_match`.
+    ///
+    /// # Returns
+    /// - `bool`: Returns `true` if a matching disk type is found, otherwise `false`.
+    ///
+    /// # Notes
+    /// - This function assumes that `self_ref.type_info` implements the `Clone` trait so it can be
+    ///   safely cloned for iteration.
+    /// - The behavior of `check_disk_match` determines the conditions under which a match is considered found.
+    /// - The function will stop iteration as soon as a match is found, enhancing performance.
+    ///
+    /// # Example (pseudocode, assuming valid usage):
+    /// ```rust
+    /// let mut d64_instance = D64::new();
+    /// let is_disk_type_identified = d64_instance.identify_disk_type();
+    /// if is_disk_type_identified {
+    ///     println!("Disk type identified.");
+    /// } else {
+    ///     println!("Failed to identify disk type.");
+    /// }
+    /// ```
+    fn identify_disk_type(self_ref: &mut D64) -> bool {
+        let type_info_clone = self_ref.type_info.clone();
+        for type_info in &type_info_clone {
+            if let Some(found) = check_disk_match(self_ref, type_info) {
+                return found;
+            }
+        }
+        false
+    }
+
+    /// Sets up the identified type information for a given `D64` structure.
+    ///
+    /// # Parameters
+    /// - `self_ref`: A mutable reference to the `D64` instance being configured.
+    /// - `type_info`: A reference to the `TypeInfo` structure containing information about the identified type.
+    /// - `has_error_info`: A boolean indicating whether error information is present for the identified type.
+    ///
+    /// # Functionality
+    /// - Copies the `type_info` into the `identified_type_info` of the `D64` object.
+    /// - Updates the `error_information_present` field in `identified_type_info` based on the `has_error_info` parameter.
+    /// - Truncates the `data` of the `D64` object to match the `disk_size` specified in the provided `type_info`.
+    /// - Updates the `disk_size` field of the `D64` object using the `disk_size` from the provided `type_info`.
+    ///
+    /// This function ensures that the `D64` object's identified type and its associated disk data are properly
+    /// synchronized with the provided type information and error state.
+    fn setup_identified_type(self_ref: &mut D64, type_info: &TypeInfo, has_error_info: bool) {
+        self_ref.identified_type_info = type_info.clone();
+        self_ref.identified_type_info.error_information_present = has_error_info;
+        // temporarily truncate the error information
+        self_ref
+            .data
+            .truncate(self_ref.identified_type_info.disk_size);
+        self_ref.disk_size = self_ref.identified_type_info.disk_size;
+    }
+
+    /// Checks if the length of the disk's data matches the expected size defined in the `TypeInfo`.
+    ///
+    /// This function compares the `self_ref`'s data length (`self_ref.data.len()`) with the `disk_size`
+    /// property of `type_info`. If the sizes match, it identifies the type using the
+    /// `setup_identified_type` function. Additionally, this function handles cases where the
+    /// data length matches the sum of `disk_size` and `error_size` and treats it as a valid
+    /// match with error tolerance.
+    ///
+    /// # Parameters
+    /// - `self_ref`: A mutable reference to a `D64` instance for which the data is being checked.
+    /// - `type_info`: A reference to a `TypeInfo` struct containing the expected `disk_size`
+    ///   and `error_size`.
+    ///
+    /// # Returns
+    /// - `Some(true)` if `self_ref.data.len()` matches either the `disk_size` or `disk_size + error_size`.
+    /// - `None` if no match is found.
+    ///
+    /// # Function Flow
+    /// 1. Retrieve the length of `self_ref.data`.
+    /// 2. Compare the data length to `type_info.disk_size`.
+    ///    - If equal, call `setup_identified_type` with error flag as `false` and return `Some(true)`.
+    /// 3. Compare the data length to `type_info.disk_size + type_info.error_size`.
+    ///    - If equal, call `setup_identified_type` with error flag as `true` and return `Some(true)`.
+    /// 4. If no match is found in either case, return `None`.
+    ///
+    /// # Side Effects
+    /// Calls the `setup_identified_type` function, which modifies the state of `self_ref` to associate
+    /// it with the provided type information.
+    ///
+    /// # Example
+    /// ```rust
+    /// let mut d64_instance = D64::new();
+    /// let type_info = TypeInfo { disk_size: 1024, error_size: 16 };
+    ///
+    /// match check_disk_match(&mut d64_instance, &type_info) {
+    ///     Some(true) => println!("Disk size matches type information."),
+    ///     None => println!("Disk size does not match."),
+    /// }
+    /// ```
+    fn check_disk_match(self_ref: &mut D64, type_info: &TypeInfo) -> Option<bool> {
+        let data_len = self_ref.data.len();
+
+        if data_len == type_info.disk_size {
+            setup_identified_type(self_ref, type_info, false);
+            return Some(true);
+        }
+
+        if data_len == type_info.disk_size + type_info.error_size {
+            setup_identified_type(self_ref, type_info, true);
+            return Some(true);
+        }
+
+        None
+    }
+
+    /// Returns the maximum valid sector for the current D64 instance based on the associated
+    /// identified type information's error size.
+    ///
+    /// # Parameters
+    ///
+    /// * `self_ref` - A mutable reference to a `D64` instance.
+    ///
+    /// # Returns
+    ///
+    /// * `i32` - The maximum valid sector as an integer, derived by casting the
+    ///   `error_size` from the `identified_type_info` field to an `i32`.
+    ///
+    /// # Note
+    ///
+    /// This function assumes that `identified_type_info.error_size` exists and holds a
+    /// meaningful value. Ensure this value is properly initialized before calling this method.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let mut d64_instance = D64::new();
+    /// let max_sector = d64_instance.get_max_valid_sector();
+    /// println!("Max valid sector: {}", max_sector);
+    /// ```
+    fn get_max_valid_sector(self_ref: &D64) -> i32 {
+        self_ref.identified_type_info.error_size as i32
+    }
 
     impl DiskParser for D64 {
         /// Parses the disk data into sectors and populates the `sectors` field.
@@ -820,8 +969,8 @@ pub mod cbm {
                 return Err("disk is empty".to_string());
             }
 
-            if self.data.len() != self.disk_size {
-                return Err(format!("invalid file size: {}", self.data.len()));
+            if identify_disk_type(self) == false {
+                return Err("disk type is not identified".to_string());
             }
 
             self.parse_sectors();
@@ -942,7 +1091,7 @@ pub mod cbm {
         /// }
         /// ```
         fn get_sector(&self, sector: i32) -> Option<Sector> {
-            if sector > MAX_VALID_SECTOR {
+            if sector > get_max_valid_sector(self) {
                 return None;
             }
 
@@ -950,28 +1099,56 @@ pub mod cbm {
             Some(copy)
         }
 
-        /// Creates a new instance of the struct, initializing its fields to their default values.
+        /// Creates a new instance of the struct initialized with default values.
+        ///
+        /// The `new` function initializes the following fields:
+        ///
+        /// - `sector_map`: A predefined vector representing the sizes of sectors in the system.
+        /// - `type_info`: A vector of `TypeInfo` objects that provide metadata about disk variants,
+        ///   including disk size, error size, and whether error information is present. There are three variants:
+        ///     - Variant 1
+        ///     - Variant 2
+        ///     - Variant 3
+        /// - `cumulated_sectors`: A vector that holds cumulative sums of sector sizes from `sector_map`.
+        ///   This is calculated using an iterator with the `.scan()` function to maintain a running total.
+        ///
+        /// The returned struct has the following default field values:
+        /// - `data`: An empty vector, intended to store specific disk data.
+        /// - `disk_size`: Initialized to `DISK_SIZE_VARIANT_1`, which corresponds to the first disk type.
+        /// - `sectors`: An empty vector, reserved for sector-specific data when needed.
+        /// - `cumulated_sectors`: Pre-computed cumulative sector sizes from `sector_map`.
+        /// - `debug_output`: A boolean flag initialized to `false`, used to toggle debugging information.
+        /// - `type_info`: The predefined vector describing disk variants and relevant metadata.
+        /// - `identified_type_info`: Set to the default `TypeInfo` of `Variant 1`, which corresponds to:
+        ///   - Disk size: `DISK_SIZE_VARIANT_1`
+        ///   - Error size: `ERROR_SIZE_VARIANT_1`
+        ///   - Error information presence: `false`
         ///
         /// # Returns
-        /// A newly constructed instance of the struct with the following initialized fields:
-        /// - `data`: An empty `Vec` for storing data.
-        /// - `disk_size`: A predefined size of the disk set to `174848`.
-        /// - `sectors`: An empty `Vec` representing sectors associated with the disk.
-        /// - `sector_map`: A `Vec` initialized with predefined sector identifiers, which are a sequence
-        ///   of numbers that likely define the layout or structure of the sectors.
-        ///
-        /// # Example
-        /// ```
-        /// let instance = YourStruct::new();
-        /// assert_eq!(instance.data.len(), 0);
-        /// assert_eq!(instance.disk_size, 174848);
-        /// assert_eq!(instance.sectors.len(), 0);
-        /// assert_eq!(instance.sector_map.len(), 35);
-        /// ```
+        /// A new instance of the struct with all fields initialized using the predefined or calculated values.
         fn new() -> Self {
             let sector_map = vec![
                 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 19, 19, 19, 19,
-                19, 19, 19, 18, 18, 18, 18, 18, 18, 17, 17, 17, 17, 17,
+                19, 19, 19, 18, 18, 18, 18, 18, 18, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
+                17, 17,
+            ];
+
+            let type_info = vec![
+                TypeInfo {
+                    disk_size: DISK_SIZE_VARIANT_1,
+                    error_size: ERROR_SIZE_VARIANT_1,
+                    error_information_present: false,
+                },
+                TypeInfo {
+                    disk_size: DISK_SIZE_VARIANT_2,
+                    error_size: ERROR_SIZE_VARIANT_2,
+                    error_information_present: false,
+                },
+                TypeInfo {
+                    disk_size: DISK_SIZE_VARIANT_3,
+                    error_size: ERROR_SIZE_VARIANT_3,
+                    error_information_present: false,
+                },
             ];
 
             // Calculate cumulated_sectors before creating the struct
@@ -985,10 +1162,16 @@ pub mod cbm {
 
             Self {
                 data: Vec::new(),
-                disk_size: DISK_SIZE,
+                disk_size: DISK_SIZE_VARIANT_1,
                 sectors: Vec::new(),
                 cumulated_sectors,
                 debug_output: false,
+                type_info,
+                identified_type_info: TypeInfo {
+                    disk_size: DISK_SIZE_VARIANT_1,
+                    error_size: ERROR_SIZE_VARIANT_1,
+                    error_information_present: false,
+                },
             }
         }
 
@@ -1074,7 +1257,7 @@ pub mod cbm {
         ///   populated with cumulative sector counts for this function to work
         ///   correctly.
         fn get_track_info_for_raw_sector(&self, sector: i32) -> Option<TrackInfo> {
-            if sector > MAX_VALID_SECTOR {
+            if sector > get_max_valid_sector(self) {
                 return None;
             }
 
@@ -1137,7 +1320,7 @@ pub mod cbm {
             let raw_sector =
                 self.cumulated_sectors[(track.track - 2) as usize] + (track.sector as i32);
 
-            if raw_sector > MAX_VALID_SECTOR {
+            if raw_sector > get_max_valid_sector(self) {
                 return None;
             }
 
@@ -1711,7 +1894,7 @@ pub mod cbm {
         /// }
         /// ```
         fn find_parent_sector(&mut self, sector: i32) -> Option<i32> {
-            if sector > MAX_VALID_SECTOR {
+            if sector > get_max_valid_sector(self) {
                 return None;
             }
 
