@@ -1,7 +1,6 @@
 pub mod cbm {
     use endian_codec::{DecodeLE, EncodeLE, PackedSize};
     use sha1::{Digest, Sha1};
-    use std::collections::BTreeMap;
 
     /// The `DiskParser` trait defines an interface for parsing and manipulating `.D64` disk image files.
     /// Implementing this trait provides methods for parsing sectors, loading files, and interacting
@@ -681,7 +680,26 @@ pub mod cbm {
         hex_string
     }
 
-    /// Creates the default TypeInfo for variant 1
+    /// Creates a default `TypeInfo` instance with preset configuration values.
+    ///
+    /// # Description
+    /// This function returns a `TypeInfo` struct initialized with predefined constants
+    /// for its `disk_size` and `error_size` fields. Additionally, the `error_information_present`
+    /// field is set to `false` by default.
+    ///
+    /// # Returns
+    /// * A `TypeInfo` struct with the following values:
+    ///   - `disk_size`: Set to `DISK_SIZE_VARIANT_1` (a predefined constant).
+    ///   - `error_size`: Set to `ERROR_SIZE_VARIANT_1` (a predefined constant).
+    ///   - `error_information_present`: Set to `false`.
+    ///
+    /// # Example
+    /// ```rust
+    /// let info = default_type_info();
+    /// assert_eq!(info.disk_size, DISK_SIZE_VARIANT_1);
+    /// assert_eq!(info.error_size, ERROR_SIZE_VARIANT_1);
+    /// assert_eq!(info.error_information_present, false);
+    /// ```
     fn default_type_info() -> TypeInfo {
         TypeInfo {
             disk_size: DISK_SIZE_VARIANT_1,
@@ -690,6 +708,32 @@ pub mod cbm {
         }
     }
 
+    /// Creates and returns a `Vec` of `TypeInfo` structs with predefined values.
+    ///
+    /// This function initializes a collection of `TypeInfo` instances,
+    /// each with specific values for `disk_size`, `error_size`, and
+    /// `error_information_present`. The `disk_size` and `error_size`
+    /// fields use constant variants (e.g., `DISK_SIZE_VARIANT_1`,
+    /// `ERROR_SIZE_VARIANT_1`, etc.), and the `error_information_present`
+    /// field is set to `false` for all instances.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `TypeInfo` structs, where:
+    /// - The first instance has values from `DISK_SIZE_VARIANT_1` and `ERROR_SIZE_VARIANT_1`.
+    /// - The second instance has values from `DISK_SIZE_VARIANT_2` and `ERROR_SIZE_VARIANT_2`.
+    /// - The third instance has values from `DISK_SIZE_VARIANT_3` and `ERROR_SIZE_VARIANT_3`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let type_infos = create_type_info();
+    /// assert_eq!(type_infos.len(), 3);
+    /// assert_eq!(type_infos[0].error_information_present, false);
+    /// ```
+    ///
+    /// This example demonstrates how to use the function and check the size of the returned vector,
+    /// as well as validate the `error_information_present` field for any instance.
     fn create_type_info() -> Vec<TypeInfo> {
         vec![
             TypeInfo {
@@ -839,9 +883,7 @@ pub mod cbm {
         for i in 0..self_ref.get_sector_count() as i32 {
             let raw_sector = self_ref.get_sector(i)?;
 
-            if raw_sector.track == track_info.track as u8
-                && raw_sector.sector == track_info.sector as u8
-            {
+            if raw_sector.track == track_info.track && raw_sector.sector == track_info.sector {
                 return Some(i);
             }
         }
@@ -867,7 +909,7 @@ pub mod cbm {
     /// - Assumes the `get_sector` method retrieves sector data as an object with a `data` field (of type `Vec<u8>`).
     /// - The resulting `PRG`'s `name` is set to `"unknown"`. Additional logic may be required if custom naming is desired.
     fn process_file_sectors(self_ref: &D64, sectors: &[i32]) -> PRG {
-        let mut file = PRG {
+        let mut prg_file = PRG {
             data: Vec::new(),
             name: String::from("unknown"),
             directory: false,
@@ -880,22 +922,35 @@ pub mod cbm {
             },
         };
 
-        for &sector in sectors {
-            if let Some(sector_data) = self_ref.get_sector(sector) {
-                if sector_data.track != 0 {
-                    file.data.append(&mut sector_data.data.to_vec());
-                } else {
-                    if sector_data.sector > 0xFD {
-                        file.data.append(&mut sector_data.data.to_vec());
-                    } else {
-                        file.data.append(
-                            &mut sector_data.data[0..(sector_data.sector - 1) as usize].to_vec(),
-                        );
-                    }
-                }
+        for &sector_id in sectors {
+            if let Some(sector_data) = self_ref.get_sector(sector_id) {
+                prg_file
+                    .data
+                    .extend_from_slice(extract_sector_data(&sector_data));
             }
         }
-        file
+
+        prg_file
+    }
+
+    /// Extracts the relevant data from a sector based on track and sector values.
+    ///
+    /// # Parameters
+    /// - `sector`: The sector containing track, sector, and data information
+    ///
+    /// # Returns
+    /// A slice of the sector's data that should be included in the final file
+    fn extract_sector_data(sector: &Sector) -> &[u8] {
+        if sector.track != 0 {
+            return &sector.data;
+        }
+
+        if sector.sector > 0xFD {
+            &sector.data
+        } else {
+            let end_index = sector.sector.saturating_sub(1) as usize;
+            &sector.data[..end_index.min(sector.data.len())]
+        }
     }
 
     /// Processes a directory file and extracts file entries.
