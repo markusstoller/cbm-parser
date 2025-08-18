@@ -68,6 +68,7 @@ pub(crate) trait DiskParser {
     ///
     /// Use this method to toggle debug output for logging or diagnostic purposes.
     fn set_debug_output(&mut self, debug_output: bool) -> &mut Self;
+
     /// Parses a file located at the given file path and updates internal state based on its contents.
     ///
     /// # Parameters
@@ -90,6 +91,7 @@ pub(crate) trait DiskParser {
     /// This function does not provide detailed error information. If detailed error handling
     /// is required, consider implementing a more descriptive error reporting mechanism.
     fn parse_file(&mut self, path: &str) -> Result<bool, String>;
+
     /// Parses data from the provided buffer and updates the internal state of the struct.
     ///
     /// # Arguments
@@ -119,6 +121,7 @@ pub(crate) trait DiskParser {
     ///
     /// Ensure the buffer provided is valid and has the expected format to avoid unexpected behavior.
     fn parse_from_buffer(&mut self, buffer: &[u8]) -> Result<bool, String>;
+
     /// Retrieves the total number of sectors.
     ///
     /// This method returns the count of sectors associated with the implementing object.
@@ -131,6 +134,7 @@ pub(crate) trait DiskParser {
     /// ```
     /// let sector_count = my_object.get_sector_count();
     fn get_sector_count(&self) -> usize;
+
     /// Retrieves a sector based on the given sector identifier.
     ///
     /// # Parameters
@@ -150,6 +154,7 @@ pub(crate) trait DiskParser {
     /// }
     /// ```
     fn get_sector(&self, sector: i32) -> Option<Sector>;
+
     /// Creates a new instance of the implementing type.
     ///
     /// # Returns
@@ -160,6 +165,7 @@ pub(crate) trait DiskParser {
     /// let instance = ImplementingType::new();
     /// ```
     fn new() -> Self;
+
     /// Retrieves the track number associated with the given sector.
     ///
     /// # Parameters
@@ -173,6 +179,7 @@ pub(crate) trait DiskParser {
     /// ```rust
     /// let track = some
     fn get_track_info_for_raw_sector(&self, sector: i32) -> Option<TrackInfo>;
+
     /// Retrieves the sector information for a given track.
     ///
     /// # Arguments
@@ -202,6 +209,7 @@ pub(crate) trait DiskParser {
     ///
     /// Ensure that the `TrackInfo` object provided contains valid data to correctly retrieve the sector.
     fn get_sector_for_track_info(&self, track: &TrackInfo) -> Option<i32>;
+
     /// Recursively searches for and collects all the files within a specified directory.
     ///
     /// # Behavior
@@ -234,6 +242,7 @@ pub(crate) trait DiskParser {
     /// file_handler.find_all_files();
     /// ```
     fn find_all_files(&mut self) -> Option<Vec<PRG>>;
+
     /// Retrieves all files currently stored or managed in the application.
     ///
     /// This function fetches and returns a vector of `PRG` objects, which represent the files

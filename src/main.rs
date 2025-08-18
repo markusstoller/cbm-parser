@@ -8,10 +8,10 @@ use processor::collector::*;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
-use std::sync::atomic::{AtomicI32};
+use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 use tokio::*;
-use utils::helper::{Database, SqliteHandler, ProgressState};
+use utils::helper::{Database, ProgressState, SqliteHandler};
 use walkdir::{DirEntry, WalkDir};
 
 /// Simple d64 parser
@@ -70,8 +70,6 @@ struct Args {
 fn get_extension_from_filename(filename: &str) -> Option<&str> {
     Path::new(filename).extension().and_then(OsStr::to_str)
 }
-
-
 
 /// Asynchronous consumer task that processes directory entries received through a channel.
 ///

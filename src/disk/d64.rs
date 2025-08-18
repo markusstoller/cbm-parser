@@ -17,6 +17,7 @@ pub(crate) struct FileEntry {
     sector: u8,
     attribute: u8,
 }
+
 const HEX_CHAR_LOOKUP: [char; 16] = [
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
 ];
@@ -56,6 +57,23 @@ pub(crate) struct D64 {
     identified_type_info: TypeInfo,
 }
 
+/// The constant `DIRECTORY_ENTRY_SIZE` defines the size of a single directory entry in bytes.
+///
+/// This value is used to allocate memory or to parse and manipulate directory entries
+/// in a file system or related data structures.
+///
+/// # Value
+/// - `32`: Each directory entry occupies 32 bytes.
+///
+/// # Usage Example
+/// ```
+/// let entry_size = DIRECTORY_ENTRY_SIZE;
+/// println!("Each directory entry is {} bytes in size.", entry_size);
+/// ```
+///
+/// # Note
+/// Ensure that any operations involving directory entries respect this size constant
+/// to avoid memory or parsing errors.
 const DIRECTORY_ENTRY_SIZE: usize = 32;
 /// A constant representing the directory track in a file storage or disk management system.
 ///
@@ -173,6 +191,7 @@ impl DiskParser for D64 {
         self.debug_output = debug_output;
         self
     }
+
     /// Parses a file from the given path and processes its content.
     ///
     /// # Parameters
@@ -817,6 +836,7 @@ fn parse_disk(self_ref: &mut D64) -> Result<bool, String> {
     parse_sectors(self_ref);
     Ok(true)
 }
+
 /// Converts a slice of `u8` values into a hexadecimal string representation.
 ///
 /// This function takes in a slice of bytes (`&[u8]`) and converts each byte
@@ -1352,6 +1372,7 @@ fn process_single_file(self_ref: &mut D64, sector_index: i32) -> Option<PRG> {
 
     Some(file)
 }
+
 /// Builds a debug string for the provided list of file sectors.
 ///
 /// This function takes a slice of sector identifiers (`file_sectors`) and generates a string

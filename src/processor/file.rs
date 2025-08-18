@@ -5,6 +5,86 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Processes a D64 disk image buffer, extracts files, and adds entries to a database via a helper.
+///
+/// This function takes a buffer representation of a D64 disk image, parses it using the `D64`
+/// instance, and processes each file found in the image. For each file that is not a directory,
+/// an entry is added to the database using the provided `SqliteHandler`.
+///
+/// If the image cannot be loaded or no files are found, appropriate messages are logged, and
+/// the function returns `false`.
+///
+/// # Parameters
+/// - `buffer`: A slice of bytes representing the D64 image to be processed.
+/// - `parent_file`: A string slice specifying the name of the parent file from which the D64
+///   image was derived.
+/// - `helper`: A reference-counted, thread-safe wrapper (`Arc<Mutex<SqliteHandler>`) allowing
+///   safe concurrent access to the database handler.
+///
+/// # Returns
+/// - `true` if the D64 image was successfully loaded and files were processed.
+/// - `false` if the image could not be loaded or no files were found.
+///
+/// # Behavior
+/// - Initializes a `D64` object and disables debug output.
+/// - Attempts to parse the `buffer` as a D64 image.
+/// - Logs an error if the image cannot be loaded.
+/// - Iterates through all files in the image, excluding directories, and for each file:
+///   - Creates an `Element` object with file data and the parent file name.
+///   - Adds it to the database using the `SqliteHandler`.
+/// - Logs an error if no files are found.
+///
+/// ```rust
+/// // Example usage:
+/// let buffer = std::fs::read("disk_image.d64").unwrap();
+/// let parent_file = "parent_file.d64";
+/// let helper = Arc::new(Mutex::new(SqliteHandler::new("database.db")));
+///
+/// if process_d64_image(&buffer, parent_file, &helper) {
+///     println!("D64 image processed successfully");
+/// } else {
+///     println!("Failed to process D64 image");
+/// }
+/// ```
+fn process_image(
+    buffer: &[u8],
+    parent_file: &str,
+    sqlite: &Arc<Mutex<SqliteHandler>>,
+) -> Result<bool, String> {
+    let mut d64 = D64::new();
+    if let Err(result) = d64.set_debug_output(false).parse_from_buffer(buffer) {
+        return Err(result);
+    }
+
+    if let Some(files) = d64.get_all_files() {
+        for file in files {
+            if file.directory {
+                continue;
+            }
+            /*
+            {
+                println!(
+                    "filename: {:16} track: #{:2.2}:{:2.2} length: {:10} sha256: {}",
+                    file.name,
+                    file.track,
+                    file.sector,
+                    file.data.len(),
+                    file.hashes.sha256
+                );
+            }
+
+             */
+            sqlite.lock().unwrap().add_item(Element {
+                prg: file,
+                parent: parent_file.to_string(),
+            });
+        }
+        Ok(true)
+    } else {
+        Err("no files found".to_string())
+    }
+}
+
 /// Creates a collection of file parsers and associates them with file extensions.
 ///
 /// This function initializes a `BTreeMap` to store file parsers, each identified
@@ -54,86 +134,6 @@ pub(crate) fn create_parsers() -> BTreeMap<&'static str, Box<dyn FileParser>> {
     parsers.insert("zip", Box::new(Zip::new()));
     parsers.insert("7z", Box::new(SevenZip::new()));
     parsers
-}
-
-/// Processes a D64 disk image buffer, extracts files, and adds entries to a database via a helper.
-///
-/// This function takes a buffer representation of a D64 disk image, parses it using the `D64`
-/// instance, and processes each file found in the image. For each file that is not a directory,
-/// an entry is added to the database using the provided `SqliteHandler`.
-///
-/// If the image cannot be loaded or no files are found, appropriate messages are logged, and
-/// the function returns `false`.
-///
-/// # Parameters
-/// - `buffer`: A slice of bytes representing the D64 image to be processed.
-/// - `parent_file`: A string slice specifying the name of the parent file from which the D64
-///   image was derived.
-/// - `helper`: A reference-counted, thread-safe wrapper (`Arc<Mutex<SqliteHandler>`) allowing
-///   safe concurrent access to the database handler.
-///
-/// # Returns
-/// - `true` if the D64 image was successfully loaded and files were processed.
-/// - `false` if the image could not be loaded or no files were found.
-///
-/// # Behavior
-/// - Initializes a `D64` object and disables debug output.
-/// - Attempts to parse the `buffer` as a D64 image.
-/// - Logs an error if the image cannot be loaded.
-/// - Iterates through all files in the image, excluding directories, and for each file:
-///   - Creates an `Element` object with file data and the parent file name.
-///   - Adds it to the database using the `SqliteHandler`.
-/// - Logs an error if no files are found.
-///
-/// ```rust
-/// // Example usage:
-/// let buffer = std::fs::read("disk_image.d64").unwrap();
-/// let parent_file = "parent_file.d64";
-/// let helper = Arc::new(Mutex::new(SqliteHandler::new("database.db")));
-///
-/// if process_d64_image(&buffer, parent_file, &helper) {
-///     println!("D64 image processed successfully");
-/// } else {
-///     println!("Failed to process D64 image");
-/// }
-/// ```
-fn process_d64_image(
-    buffer: &[u8],
-    parent_file: &str,
-    helper: &Arc<Mutex<SqliteHandler>>,
-) -> Result<bool, String> {
-    let mut d64 = D64::new();
-    if let Err(result) = d64.set_debug_output(false).parse_from_buffer(buffer) {
-        return Err(result);
-    }
-
-    if let Some(files) = d64.get_all_files() {
-        for file in files {
-            if file.directory {
-                continue;
-            }
-            /*
-            {
-                println!(
-                    "filename: {:16} track: #{:2.2}:{:2.2} length: {:10} sha256: {}",
-                    file.name,
-                    file.track,
-                    file.sector,
-                    file.data.len(),
-                    file.hashes.sha256
-                );
-            }
-
-             */
-            helper.lock().unwrap().add_item(Element {
-                prg: file,
-                parent: parent_file.to_string(),
-            });
-        }
-        Ok(true)
-    } else {
-        Err("no files found".to_string())
-    }
 }
 
 /// Context object that groups related parameters for file processing
@@ -269,6 +269,7 @@ impl FileProcessingContext {
             println!("file not processed {} - unknown extension", file_path);
         }
     }
+
     /// Handles the result of processing a file buffer.
     ///
     /// This function processes the provided buffer as a `.d64` disk image using the `process_d64_image`
@@ -298,7 +299,7 @@ impl FileProcessingContext {
     /// Any errors returned by `process_d64_image` will not be propagated but will instead be logged
     /// to the console with an associated error message and the file name.
     fn handle_file_processing_result(&self, buffer: &[u8], parent_file: &str) {
-        match process_d64_image(buffer, parent_file, &self.helper) {
+        match process_image(buffer, parent_file, &self.helper) {
             Ok(_) => self.increment_parsed(),
             Err(error) => println!("file not processed {} - error: {}", parent_file, error),
         }

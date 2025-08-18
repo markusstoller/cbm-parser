@@ -12,6 +12,33 @@ pub(crate) trait FileParser: Send + Sync {
     fn parse(&self, parent_file: &str, callback: &dyn Fn(&[u8], &str)) -> Result<(), String>;
 }
 
+/// Extracts the file extension from a given filename.
+///
+/// # Arguments
+///
+/// * `filename` - A string slice representing the name of the file from which the extension is to be extracted.
+///
+/// # Returns
+///
+/// * `Option<&str>` -
+///     - `Some(&str)` containing the file extension if it exists and can be represented as UTF-8.
+///     - `None` if the file does not have an extension or if the extension cannot be converted to a UTF-8 string.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use std::ffi::OsStr;
+///
+/// let filename = "example.txt";
+/// assert_eq!(get_extension_from_filename(filename), Some("txt"));
+///
+/// let filename_no_extension = "example";
+/// assert_eq!(get_extension_from_filename(filename_no_extension), None);
+///
+/// let hidden_file = ".hidden";
+/// assert_eq!(get_extension_from_filename(hidden_file), None);
+/// ```
 fn get_extension_from_filename(filename: &str) -> Option<&str> {
     Path::new(filename).extension().and_then(OsStr::to_str)
 }
@@ -19,6 +46,13 @@ fn get_extension_from_filename(filename: &str) -> Option<&str> {
 pub(crate) struct Regular {}
 
 impl FileParser for Regular {
+    /// Creates and returns a new instance of the `Regular` struct.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let instance = Regular::new();
+    /// ```
     fn new() -> Self {
         Regular {}
     }

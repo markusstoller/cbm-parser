@@ -1,5 +1,5 @@
-use rusqlite::{params, Connection};
 use crate::disk::cbm::PRG;
+use rusqlite::{Connection, params};
 
 /// The `Database` trait defines a set of methods required for implementing a database.
 /// This trait is designed to work with functionalities like creating a new database instance,
@@ -18,6 +18,7 @@ pub(crate) trait Database {
     /// let instance = StructName::new("example.txt");
     /// ```
     fn new(file_name: &str) -> Self;
+
     /// Closes the current resource or connection associated with the implementation.
     ///
     /// This function is typically used to release or finalize any resources that the
@@ -47,6 +48,7 @@ pub(crate) trait Database {
     /// }
     /// ```
     fn close(&mut self) -> Result<bool, String>;
+
     /// Adds an item to the collection.
     ///
     /// # Parameters
@@ -176,7 +178,7 @@ fn setup_database(file_name: &str) -> Connection {
         )",
         [],
     )
-        .expect("failed to create files table");
+    .expect("failed to create files table");
 
     conn
 }
@@ -235,15 +237,15 @@ fn setup_database(file_name: &str) -> Connection {
 /// ```
 fn insert_file_into_db(stmt: &mut rusqlite::Statement, parent_file: &str, file: &PRG) -> bool {
     if let Err(e) = stmt.execute(params![
-            parent_file,
-            file.name,
-            file.track as i64,
-            file.sector as i64,
-            file.data.len() as i64,
-            file.hashes.md5,
-            file.hashes.sha1,
-            file.hashes.sha256
-        ]) {
+        parent_file,
+        file.name,
+        file.track as i64,
+        file.sector as i64,
+        file.data.len() as i64,
+        file.hashes.md5,
+        file.hashes.sha1,
+        file.hashes.sha256
+    ]) {
         eprintln!("failed to insert row into sqlite: {}", e);
         return false;
     }
