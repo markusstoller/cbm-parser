@@ -1,5 +1,8 @@
+mod progress;
+
 pub mod helper {
     use crate::disk::cbm::PRG;
+    pub(crate) use crate::utils::progress::ProgressState;
     use rusqlite::{Connection, params};
 
     /// The `Database` trait defines a set of methods required for implementing a database.
