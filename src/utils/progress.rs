@@ -110,7 +110,7 @@ impl ProgressState {
     /// - Relaxed ordering is sufficient here as the operation does not
     ///   depend on synchronization with other threads.
     pub(crate) fn print_final_count(&self) {
-        println!("{} files parsed", self.files_parsed.load(Ordering::Relaxed));
+        println!("\n{} files parsed", self.files_parsed.load(Ordering::Relaxed));
     }
 
     /// Spawns a background task to periodically report progress of file processing.
@@ -159,6 +159,7 @@ impl ProgressState {
         let files_attempted = self.files_attempted.clone();
         let total_files = self.total_files.clone();
 
+        println!("Starting progress reporter...");
         self.handle = Some(spawn(async move {
             let mut last_printed = -1; // sentinel to force initial print
             loop {
@@ -166,11 +167,11 @@ impl ProgressState {
                 let total = total_files.load(Ordering::Relaxed);
 
                 if attempted != last_printed {
-                    println!("Progress: {} / {} files processed", attempted, total);
+                    print!("\rProgress: {} / {} files processed", attempted, total);
                     last_printed = attempted;
                 }
 
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }));
     }

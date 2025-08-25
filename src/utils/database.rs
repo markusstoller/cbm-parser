@@ -408,7 +408,7 @@ impl Database for SqliteHandler {
     fn add_item(&mut self, element: Element) {
         self.queue.push(element);
         if self.queue.len() > 10000 {
-            println!("serializing queue to db");
+            //println!("serializing queue to db");
             write_to_db(self).expect("Serializing failed");
         }
     }

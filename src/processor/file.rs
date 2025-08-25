@@ -266,7 +266,7 @@ impl FileProcessingContext {
                 println!("Parser error for file {} - error: {}", file_path, e);
             }
         } else {
-            println!("file not processed {} - unknown extension", file_path);
+            //println!("\rfile not processed {} - unknown extension", file_path);
         }
     }
 
@@ -301,7 +301,9 @@ impl FileProcessingContext {
     fn handle_file_processing_result(&self, buffer: &[u8], parent_file: &str) {
         match process_image(buffer, parent_file, &self.helper) {
             Ok(_) => self.increment_parsed(),
-            Err(error) => println!("file not processed {} - error: {}", parent_file, error),
+            Err(error) => {
+
+            }//print!("\rfile not processed {} - error: {}                                                                                                          ", parent_file, error),
         }
     }
 }

@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 use tokio::*;
-use utils::helper::{Database, ProgressState, SqliteHandler};
+use utils::helper::{
+    Database, ProgressState, SqliteHandler, start_frontend_server
+};
 use walkdir::{DirEntry, WalkDir};
 
 /// Simple d64 parser
@@ -24,13 +26,13 @@ struct Args {
 
     /// Path to the file to be processed or directory containing files to be processed
     #[arg(short, long)]
-    path: String,
+    path: Option<String>,
 
     /// Number of threads to use
     #[arg(short, long, default_value_t = 4)]
     threads: u8,
 
-    /// Number of threads to use
+    /// Verbose logging
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
 }
@@ -308,7 +310,11 @@ async fn producer(args: &Args) {
     progress.spawn_reporter();
 
     // Process files in the directory
-    process_directory(&args.path, &progress, &tx, supported_parsers).await;
+    let directory = args
+        .path
+        .as_ref()
+        .expect("--path is required when not running in --rest mode");
+    process_directory(directory.as_str(), &progress, &tx, supported_parsers).await;
 
     // close the channel, indicating that no more files will be sent
     tx.close();
@@ -327,7 +333,7 @@ async fn producer(args: &Args) {
 /// - Prints the parsed arguments to the console for debugging or informational purposes.
 /// - Delegates further processing or work to the `work` asynchronous function, passing in the parsed arguments.
 ///
-/// # Remarks
+/// # Remarkslogo.png
 /// The function uses the `#[tokio::main]` attribute to enable asynchronous execution.
 /// Ensure the `Args` structure and the `work` function are defined elsewhere in the code.
 ///
@@ -347,5 +353,13 @@ async fn main() {
     let args = Args::parse();
     println!("args: {:?}", args);
 
+    let dbfile = args.dbfile.clone();
+    let frontend_wait = spawn(async move {
+        if let Err(e) = start_frontend_server(&dbfile).await {
+            eprintln!("Frontend server exited with error: {}", e);
+        }
+    });
+
     producer(&args).await;
+    let _ = tokio::join!(frontend_wait);
 }
