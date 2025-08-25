@@ -114,5 +114,42 @@ License
 - No explicit license file was found. If you are the author, consider adding a LICENSE file. If you plan to use this code, verify licensing terms with the repository owner.
 
 
+Disk scanning strategy
+This project intentionally does not consult the 1541 Block Availability Map (BAM) when extracting files from a D64 image. Instead, it reconstructs files by tracing the per-block chain links embedded in the file data blocks and then associates names by matching the start track/sector with directory entries.
+
+``` 
+Disk scan at a glance
++-------------------------------------------------------------------------------------+
+| What is the BAM?                                                                    |
+| - On Commodore 1541 disks, the BAM (Block Availability Map) lives on track 18.      |
+|   It records which blocks are free/used and supports allocation for the DOS.        |
+|                                                                                     |
+| What does cbm-parser do instead?                                                    |
+| - It never relies on the BAM to decide which blocks belong to a file.               |
+| - It scans sectors and follows the file chain links stored in each data block:       |
+|     - Byte 0: next track (0 means “this is the last block”).                        |
+|     - Byte 1: next sector (or, for the last block, the number of used data bytes).  |
+|     - Bytes 2..=end: file data payload for that block.                              |
+| - Directory entries (on track 18) provide the starting track/sector for each file.  |
+|   Names are assigned by matching that start T/S with the reconstructed chain.       |
+|                                                                                     |
+| Why skip the BAM?                                                                   |
+| - Robustness: chain links are authoritative for actual file content layout.         |
+| - Resilience: even if the BAM is stale/corrupted, valid chains can still be read.   |
+| - Discovery: this can surface orphaned chains that don’t appear as allocated.       |
+|                                                                                     |
+| Trade-offs                                                                          |
+| - Orphans/Deleted: you might encounter chains that aren’t referenced by the dir.    |
+| - No allocation audit: we don’t validate block usage against the BAM.               |
+| - Non-1541 quirks: only standard 1541/D64 layout is assumed right now.              |
++-------------------------------------------------------------------------------------+
+```
+
+Notes for 1541/D64 specifics
+- Directory and BAM reside on track 18 (directory entries typically start at 18/1).  
+- Each file data block begins with two link bytes as described above. The last block   
+  uses 0 in the next-track byte, and the next-sector byte holds the used byte count.  
+- This parser reconstructs files by walking those links and concatenating payload data.
+
 Status
 - Current local date and time for this README: 2025-08-25 11:35.
