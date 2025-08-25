@@ -162,8 +162,9 @@ pub(crate) struct SqliteHandler {
 /// // `db_connection` is now ready to be used for database operations.
 /// ```
 fn setup_database(file_name: &str) -> Connection {
-    let conn = Connection::open(file_name).expect("failed to open sqlite utils");
+    let conn = Connection::open(file_name).expect("failed to open database");
 
+    // Create the files table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,6 +180,13 @@ fn setup_database(file_name: &str) -> Connection {
         [],
     )
     .expect("failed to create files table");
+
+    // Add index for fast duplicate detection
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_files_parent_filename ON files (parent, filename)",
+        [],
+    )
+    .expect("failed to create index");
 
     conn
 }
@@ -283,22 +291,24 @@ fn write_to_db(sq: &mut SqliteHandler) -> Result<(), String> {
     if let Some(ref mut conn) = sq.conn {
         if let Ok(tx) = conn.transaction() {
             {
-                let mut stmt = tx
+                // Use INSERT OR IGNORE to skip duplicates without checking first
+                let mut insert_stmt = tx
                     .prepare(
-                        "INSERT INTO files (parent, filename, track, sector, length, md5, sha1, sha256)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        "INSERT OR IGNORE INTO files (parent, filename, track, sector, length, md5, sha1, sha256)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     )
                     .expect("failed to prepare insert statement");
 
                 for elem in &sq.queue {
-                    insert_file_into_db(&mut stmt, &elem.parent, &elem.prg);
+                    insert_file_into_db(&mut insert_stmt, &elem.parent, &elem.prg);
                 }
+
                 sq.queue.clear();
             }
+
             if let Err(_) = tx.commit() {
                 return Err("failed to commit transaction".to_string());
             }
-
             Ok(())
         } else {
             Err("failed to create transaction".to_string())
