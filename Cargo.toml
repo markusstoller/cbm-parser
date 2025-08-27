@@ -11,7 +11,7 @@ sha1="*"
 endian_codec = "*"
 petscii="*"
 hex-slice="*"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 async-channel="*"
 tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros", "time"] }
 clap = { version = "*", features = ["derive"] }
