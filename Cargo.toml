@@ -13,7 +13,7 @@ petscii="*"
 hex-slice="*"
 rusqlite = { version = "0.37", features = ["bundled"] }
 async-channel="*"
-tokio = { version = "1.47.1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.48.0", features = ["rt", "rt-multi-thread", "macros", "time"] }
 clap = { version = "*", features = ["derive"] }
 zip = "*"
 sevenz-rust2 = "*"
